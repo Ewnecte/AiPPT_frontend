@@ -9,7 +9,7 @@ export async function getTemplates(): Promise<TemplateInfo[]> {
   const res = await fetch(`${BASE}/templates`)
   if (!res.ok) throw new Error('获取模板失败')
   const data = await res.json()
-  return data.templates ?? []
+  return data.data ?? []
 }
 
 /**
