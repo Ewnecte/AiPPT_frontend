@@ -99,7 +99,7 @@ export async function AIPPT_Outline_From_File(file: File, onChunk: (text: string
 }
 
 /** 按文件 id 生成 PPT（走知识库检索） */
-export async function AIPPTByID(fileId: string, onSlide: (slide: SlideSchema) => void): Promise<void> {
+export async function AIPPTByID(fileId: string, _onSlide: (slide: SlideSchema) => void): Promise<void> {
   // TODO: 参考 AIPPT_Content 的 SSE 解析实现
   throw new Error(`TODO: 实现 AIPPTByID(fileId=${fileId})`)
 }
