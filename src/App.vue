@@ -10,12 +10,13 @@
       <nav class="nav">
         <router-link to="/">录入</router-link>
         <router-link to="/ppt">模板</router-link>
+        <router-link to="/generate">生成</router-link>
         <router-link to="/editor">编辑器</router-link>
         <router-link to="/screen">放映</router-link>
         <router-link to="/settings">设置</router-link>
       </nav>
     </header>
-    <main class="main">
+    <main class="main" :class="{ wide: $route.meta.wide }">
       <router-view />
     </main>
   </div>
@@ -93,5 +94,9 @@ body {
   width: 100%;
   margin: 0 auto;
   padding: 32px 24px;
+}
+.main.wide {
+  max-width: none;
+  padding: 0;
 }
 </style>
