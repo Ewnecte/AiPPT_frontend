@@ -1,8 +1,11 @@
-// 幻灯片全局状态（元素模型）
+// 幻灯片"草稿"状态（仅服务 /generate 页的流式生成与缩略图预览）
 // ------------------------------------------------------------------
-// 幻灯片在 1920×1080 逻辑坐标系里保存为可定位元素，供编辑器 / 生成进度页
-// /（未来的）放映页消费。`slides` 中每一页同时携带 `schema`（生成契约内容），
-// 元素文本通过 ref 实时同步回 schema，可随时还原导出为 SlideSchema。
+// 注意：本 store 的 pinia id 取 'draft'，不能占用 'slides'——
+// 'slides' 已被 vendored PPTist 内核（src/pptist/store/slides.ts）使用，
+// 两者 id 相同会导致 Pinia 以先注册者为准，互相污染。
+// 本 store 保存的是外层 EditorSlide[]（1920×1080 轻量元素模型），
+// 进入 /editor 时由 Editor.vue 用 exportSchemas() 还原成 SlideSchema[]，
+// 再经 src/utils/schemaToPptist.ts 转成 PPTist Slide[] 灌入 PPTist 编辑器。
 import { defineStore } from 'pinia'
 import type { SlideSchema, SlideType } from '../types/AIPPT'
 import type { EditorSlide, SlideElement } from '../types/editor'
@@ -42,7 +45,7 @@ function encodeSnapshot(s: Snapshot): string {
   return JSON.stringify(s)
 }
 
-export const useSlidesStore = defineStore('slides', {
+export const useDraftStore = defineStore('draft', {
   state: () => ({
     slides: [] as EditorSlide[],
     currentIndex: 0,

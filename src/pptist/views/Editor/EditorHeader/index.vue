@@ -3,16 +3,6 @@
     <div class="left">
       <Popover trigger="click" placement="bottom-start" v-model:value="mainMenuVisible">
         <template #content>
-          <div class="main-menu">
-            <div class="ai-menu" @click="openAIPPTDialog(); mainMenuVisible = false">
-              <div class="icon"><i-custom:click /></div>
-              <div class="aippt-content">
-                <div class="aippt"><span>AIPPT</span></div>
-                <div class="aippt-subtitle">输入一句话，智能生成演示文稿</div>
-              </div>
-            </div>
-          </div>
-          <Divider :margin="10" />
           <div class="import-section">
             <div class="import-label">导入文件</div>
             <div class="import-grid">
@@ -85,9 +75,6 @@
           </template>
           <div class="arrow-btn"><i-icon-park-outline:down class="arrow" /></div>
         </Popover>
-      </div>
-      <div class="menu-item" v-tooltip="'AI生成PPT'" @click="openAIPPTDialog(); mainMenuVisible = false">
-        <span class="text ai">AI</span>
       </div>
       <div class="menu-item" v-tooltip="'导出'" @click="setDialogForExport('pptx')">
         <i-icon-park-outline:download class="icon" />
@@ -164,10 +151,6 @@ const setDialogForExport = (type: DialogForExportTypes) => {
 
 const openMarkupPanel = () => {
   mainStore.setMarkupPanelState(true)
-}
-
-const openAIPPTDialog = () => {
-  mainStore.setAIPPTDialogState(true)
 }
 </script>
 

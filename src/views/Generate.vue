@@ -7,7 +7,7 @@
 // 完成后可进入编辑器 / 重新生成。
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSlidesStore } from '../store/slides'
+import { useDraftStore } from '../store/slides'
 import { AIPPT_StreamEvents } from '../services'
 import SlideViewer from '../components/SlideViewer.vue'
 import {
@@ -18,7 +18,7 @@ import {
   schemasFromOutline,
 } from '../utils/aippt'
 
-const store = useSlidesStore()
+const store = useDraftStore()
 const router = useRouter()
 
 const outline = ref(store.meta.outline || '')
