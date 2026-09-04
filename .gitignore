@@ -8,3 +8,6 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+vite.config.js
+vite.config.d.ts
+components.d.ts

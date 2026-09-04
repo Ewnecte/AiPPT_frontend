@@ -1,27 +1,22 @@
 <script setup lang="ts">
 // 应用根组件：顶部品牌区 + 步骤流导航 + 路由出口
 // 设计规范见 SRS 3.1：紫蓝渐变 #667eea → #764ba2
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-
-// 放映页为全屏演示：隐藏顶栏、main 全幅无留白
-const route = useRoute()
-const isScreen = computed(() => route.path === '/screen')
 </script>
 
 <template>
   <div class="app">
-    <header v-if="!isScreen" class="topbar">
+    <header class="topbar">
       <div class="brand"><span class="logo">P</span> AiPPT</div>
       <nav class="nav">
         <router-link to="/">录入</router-link>
         <router-link to="/ppt">模板</router-link>
+        <router-link to="/generate">生成</router-link>
         <router-link to="/editor">编辑器</router-link>
         <router-link to="/screen">放映</router-link>
         <router-link to="/settings">设置</router-link>
       </nav>
     </header>
-    <main class="main" :class="{ 'main--full': isScreen }">
+    <main class="main" :class="{ wide: $route.meta.wide }">
       <router-view />
     </main>
   </div>
@@ -100,14 +95,8 @@ body {
   margin: 0 auto;
   padding: 32px 24px;
 }
-/* 放映页：全幅无留白 */
-.main--full {
+.main.wide {
   max-width: none;
-  margin: 0;
   padding: 0;
-}
-/* 放映页隐藏滚动条，避免演示时误滚动 */
-body:has(.main--full) {
-  overflow: hidden;
 }
 </style>
