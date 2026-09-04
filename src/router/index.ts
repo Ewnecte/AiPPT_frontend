@@ -4,7 +4,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 const routes = [
   { path: '/', name: 'outline', component: () => import('../views/Outline.vue') },
   { path: '/ppt', name: 'template', component: () => import('../views/TemplateSelect.vue') },
-  { path: '/editor', name: 'editor', component: () => import('../views/Editor.vue') },
+  { path: '/generate', name: 'generate', component: () => import('../views/Generate.vue') },
+  { path: '/editor', name: 'editor', meta: { wide: true }, component: () => import('../views/Editor.vue') },
   { path: '/screen', name: 'screen', component: () => import('../views/Screen.vue') },
   { path: '/settings', name: 'settings', component: () => import('../views/Settings.vue') },
 ]
