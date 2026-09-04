@@ -83,6 +83,9 @@ export async function AIPPT_Content(
 export async function AIPPT_Outline_From_File(file: File, onChunk: (text: string) => void): Promise<string> {
   const form = new FormData()
   form.append('file', file)
+  // 传唯一 fileId，避免后端 doc_store（key = user_id_file_id）重复覆盖
+  form.append('userId', '1')
+  form.append('fileId', `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
   const res = await fetch(`${BASE}/tools/aippt_outline_from_file`, { method: 'POST', body: form })
   if (!res.ok || !res.body) throw new Error('文件大纲请求失败')
   const reader = res.body.getReader()
