@@ -6,7 +6,7 @@ const routes = [
   { path: '/ppt', name: 'template', component: () => import('../views/TemplateSelect.vue') },
   { path: '/generate', name: 'generate', component: () => import('../views/Generate.vue') },
   { path: '/editor', name: 'editor', meta: { wide: true }, component: () => import('../views/Editor.vue') },
-  { path: '/screen', name: 'screen', component: () => import('../views/Screen.vue') },
+  { path: '/screen', name: 'screen', meta: { fullscreen: true }, component: () => import('../views/Screen.vue') },
   { path: '/settings', name: 'settings', component: () => import('../views/Settings.vue') },
 ]
 

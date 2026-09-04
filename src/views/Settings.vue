@@ -6,7 +6,8 @@
 //  ① 文件列表：kbFiles / 上传 / 重建 / 删除 → personaldb 的 GET /files/{user_id}、POST /upload、DELETE /files/{file_id}
 //  ② 配置保存：saveAllConfig → 系统配置读写接口（当前为 localStorage 占位）
 //  ③ 服务状态：services 数组 → 各服务 GET /healthz
-import { ref, reactive, computed } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { getFiles } from '../services'
 
 /* ================= 通用轻量 toast ================= */
 interface Toast {
@@ -29,77 +30,64 @@ type Tab = 'files' | 'config' | 'status'
 const tab = ref<Tab>('files')
 
 /* ================= ① 知识库文件列表 ================= */
+// 数据源：GET /api/files/{userId}（main_api:6800 透传 personaldb）。后端文件字段仅
+// file_id / file_name / file_type / folder_id / url，故“大小/分块/上传时间”以「—」展示。
+// 上传 / 预览 / 重建 / 删除：main_api 未开放对应端点（个人后端不可改），按“仅文档能力”
+// 的口径置灰并悬停说明；刷新按钮会真正拉取后端列表。
 interface KbFile {
-  id: number
+  id: string
   name: string
   type: string
   size: string
-  chunks: number
+  chunks: number | null
   updatedAt: string
-  status: 'ready' | 'indexing'
+  status: 'ready'
 }
-const kbFiles = ref<KbFile[]>([
-  { id: 1, name: '2026-新能源汽车市场周报.md', type: 'md', size: '18 KB', chunks: 24, updatedAt: '2026-08-20 10:12', status: 'ready' },
-  { id: 2, name: '产品白皮书-第4版.pdf', type: 'pdf', size: '2.4 MB', chunks: 186, updatedAt: '2026-08-18 09:00', status: 'ready' },
-  { id: 3, name: '竞品深度分析.pptx', type: 'pptx', size: '6.1 MB', chunks: 96, updatedAt: '2026-08-15 16:40', status: 'ready' },
-  { id: 4, name: '用户访谈纪要-上海场.docx', type: 'docx', size: '420 KB', chunks: 38, updatedAt: '2026-08-02 11:22', status: 'indexing' },
-])
+const kbFiles = ref<KbFile[]>([])
+const kbLoading = ref(false)
 const kbKeyword = ref('')
-const fileInput = ref<HTMLInputElement | null>(null)
+const UNSUPPORTED_TIP = '后端未提供该接口（知识库当前仅开放文件列表）'
 const filteredFiles = computed(() =>
   kbFiles.value.filter((f) => f.name.toLowerCase().includes(kbKeyword.value.toLowerCase())),
 )
 
-function triggerUpload() {
-  fileInput.value?.click()
-}
-function onUpload(e: Event) {
-  const input = e.target as HTMLInputElement
-  const f = input.files?.[0]
-  if (f) {
-    const ext = f.name.includes('.') ? f.name.split('.').pop()!.toLowerCase() : 'file'
-    const row: KbFile = {
-      id: Date.now(),
-      name: f.name,
-      type: ext,
-      size: f.size > 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(f.size / 1024))} KB`,
-      chunks: 0,
-      updatedAt: '刚刚',
-      status: 'indexing',
-    }
-    kbFiles.value.unshift(row)
-    showToast(`已接收「${f.name}」，开始解析并向量化`)
-    // 模拟解析完成；接入后端后在成功回调里更新该文件状态即可
-    window.setTimeout(() => {
-      row.status = 'ready'
-      row.chunks = Math.round(Math.random() * 200 + 20)
-      showToast(`「${row.name}」向量化完成`)
-    }, 1600)
+async function fetchKb() {
+  kbLoading.value = true
+  try {
+    const list = await getFiles('1')
+    kbFiles.value = list.map((f) => ({
+      id: f.file_id,
+      name: f.file_name || f.file_id,
+      type: (f.file_type || 'file').replace(/^\./, ''),
+      size: '—',
+      chunks: null,
+      updatedAt: '—',
+      status: 'ready' as const,
+    }))
+    if (list.length) showToast(`已加载 ${list.length} 个知识库文件`)
+  } catch (e) {
+    kbFiles.value = []
+    showToast(`加载知识库文件失败：${(e as Error).message}`, 'warn')
+  } finally {
+    kbLoading.value = false
   }
-  input.value = ''
 }
-function removeFile(id: number) {
-  const t = kbFiles.value.find((f) => f.id === id)
-  kbFiles.value = kbFiles.value.filter((f) => f.id !== id)
-  showToast(`已删除「${t?.name ?? ''}」`, 'warn')
-}
-// 注：删除此处仅操作本地列表，接入后端后需同步调用 DELETE 接口
-function reindexFile(id: number) {
-  const t = kbFiles.value.find((f) => f.id === id)
-  if (!t) return
-  t.status = 'indexing'
-  showToast(`正在对「${t.name}」重新分块向量化`)
-  window.setTimeout(() => {
-    t.status = 'ready'
-    t.chunks = t.chunks || Math.round(Math.random() * 200 + 20)
-    showToast(`「${t.name}」向量化完成`)
-  }, 1200)
-}
-function previewFile(name: string) {
-  showToast(`已打开「${name}」的解析详情`)
-}
+
 function refreshFiles() {
-  showToast('已刷新文件列表')
+  fetchKb()
+}
+// 以下操作后端未提供端点，仅置灰；保留桩函数避免任何意外触发时报错
+function triggerUpload() {
+  showToast('上传不可用：后端未提供文件入库接口', 'warn')
+}
+function previewFile(_name?: string) {
+  showToast('预览不可用：后端未提供文件内容接口', 'warn')
+}
+function reindexFile(_id?: string) {
+  showToast('重建不可用：后端未提供重建接口', 'warn')
+}
+function removeFile(_id?: string) {
+  showToast('删除不可用：后端未提供删除接口', 'warn')
 }
 
 /* ================= ② 系统配置 ================= */
@@ -201,44 +189,77 @@ function saveAllConfig() {
 }
 
 /* ================= ③ 服务状态 ================= */
+// 健康检查：main_api 走 /api 代理的 /healthz；其余后端服务直连各自 /healthz
+// （后端均已开 CORS）；前端 dev 服务器无 healthz，始终视为在线。无远程重启能力。
 type SvcStatus = 'online' | 'offline' | 'checking'
 interface Svc {
   name: string
   role: string
   addr: string
+  kind: 'web' | 'main' | 'svc'
   status: SvcStatus
   latency: number | null
 }
 const services = ref<Svc[]>([
-  { name: '前端服务', role: 'Vue3 开发服务器', addr: '127.0.0.1:5173', status: 'online', latency: 2 },
-  { name: '主 API 网关', role: '统一入口 / SSE 封装', addr: '127.0.0.1:6800', status: 'online', latency: 24 },
-  { name: '大纲生成 Agent', role: 'A2A · simpleOutline', addr: '127.0.0.1:10001', status: 'online', latency: 187 },
-  { name: '内容生成 Agent', role: 'A2A · slide_agent', addr: '127.0.0.1:10011', status: 'online', latency: 342 },
-  { name: '知识库服务', role: 'ChromaDB · personaldb', addr: '127.0.0.1:9100', status: 'offline', latency: null },
+  { name: '前端服务', role: 'Vue3 开发服务器', addr: '127.0.0.1:5173', kind: 'web', status: 'online', latency: null },
+  { name: '主 API 网关', role: '统一入口 / SSE 封装', addr: '127.0.0.1:6800', kind: 'main', status: 'checking', latency: null },
+  { name: '大纲生成 Agent', role: 'A2A · simpleOutline', addr: '127.0.0.1:10001', kind: 'svc', status: 'checking', latency: null },
+  { name: '内容生成 Agent', role: 'A2A · slide_agent', addr: '127.0.0.1:10011', kind: 'svc', status: 'checking', latency: null },
+  { name: '知识库服务', role: 'ChromaDB · personaldb', addr: '127.0.0.1:9100', kind: 'svc', status: 'checking', latency: null },
 ])
 const onlineCount = computed(() => services.value.filter((s) => s.status === 'online').length)
 const overallOk = computed(() => onlineCount.value === services.value.length)
 
-function healthCheck(svc: Svc) {
+function serviceUrl(kind: Svc['kind'], addr: string): string | null {
+  if (kind === 'web') return null // 前端 dev 服务器没有 healthz
+  if (kind === 'main') return '/api/healthz' // 走 vite 代理 → main_api:6800
+  return `http://${addr}/healthz`
+}
+async function checkOne(svc: Svc) {
   svc.status = 'checking'
-  window.setTimeout(() => {
+  svc.latency = null
+  const url = serviceUrl(svc.kind, svc.addr)
+  if (!url) {
     svc.status = 'online'
-    svc.latency = Math.round(Math.random() * 400 + 8)
-    showToast(`「${svc.name}」健康检查通过，延迟 ${svc.latency}ms`)
-  }, 700)
+    return
+  }
+  const start = performance.now()
+  try {
+    const ctrl = new AbortController()
+    const timer = window.setTimeout(() => ctrl.abort(), 3500)
+    const res = await fetch(url, { signal: ctrl.signal })
+    window.clearTimeout(timer)
+    if (res.ok) {
+      svc.status = 'online'
+      svc.latency = Math.max(1, Math.round(performance.now() - start))
+    } else {
+      svc.status = 'offline'
+    }
+  } catch {
+    svc.status = 'offline'
+  }
 }
-function restart(svc: Svc) {
-  svc.status = 'checking'
-  showToast(`正在重启「${svc.name}」…`)
-  window.setTimeout(() => {
-    svc.status = 'online'
-    svc.latency = Math.round(Math.random() * 300 + 6)
-    showToast(`「${svc.name}」已重启完成`)
-  }, 1500)
+async function healthCheck(svc: Svc) {
+  await checkOne(svc)
+  if (svc.status === 'online') showToast(`「${svc.name}」健康检查通过 · ${svc.latency ?? '—'}ms`)
+  else showToast(`「${svc.name}」健康检查失败`, 'warn')
 }
-function checkAll() {
-  showToast(`一键检测：${onlineCount.value}/${services.value.length} 个服务在线`)
+function restart(_svc: Svc) {
+  showToast('重启不可用：后端进程需在服务器侧重启', 'warn')
 }
+async function checkAll() {
+  await Promise.all(services.value.map((s) => checkOne(s)))
+  showToast(`一键检测完成：${onlineCount.value}/${services.value.length} 个服务在线`)
+}
+
+onMounted(() => {
+  fetchKb()
+})
+
+// 进入「服务状态」Tab 时自动跑一次真实健康检查
+watch(tab, (t) => {
+  if (t === 'status') checkAll()
+})
 </script>
 
 <template>
@@ -258,9 +279,10 @@ function checkAll() {
     <div v-if="tab === 'files'" class="panel">
       <div class="toolbar">
         <input v-model="kbKeyword" class="search" placeholder="搜索文件名…" />
-        <button class="btn ghost" @click="refreshFiles">↻ 刷新</button>
-        <button class="btn primary" @click="triggerUpload">＋ 上传文件</button>
-        <input ref="fileInput" type="file" hidden @change="onUpload" />
+        <button class="btn ghost" :disabled="kbLoading" @click="refreshFiles">
+          {{ kbLoading ? '加载中…' : '↻ 刷新' }}
+        </button>
+        <button class="btn primary" disabled :title="UNSUPPORTED_TIP">＋ 上传文件</button>
       </div>
 
       <div class="table">
@@ -273,7 +295,15 @@ function checkAll() {
           <span class="c status">状态</span>
           <span class="c ops">操作</span>
         </div>
-        <div v-if="!filteredFiles.length" class="empty">没有匹配的文件，试试上传一个：PDF / Word / PPT / Markdown / 图片 / 音频。</div>
+        <div v-if="!filteredFiles.length" class="empty">
+          {{
+            kbLoading
+              ? '正在从知识库服务加载文件…'
+              : kbFiles.length
+                ? '没有匹配的文件。'
+                : '知识库暂无入库文件：在「生成」页通过「上传文件」生成的文档会展示在此。'
+          }}
+        </div>
         <div v-for="f in filteredFiles" :key="f.id" class="tr">
           <span class="c name" :title="f.name">📄 {{ f.name }}</span>
           <span class="c type"><em class="tag">{{ f.type }}</em></span>
@@ -285,9 +315,9 @@ function checkAll() {
             {{ f.status === 'ready' ? '已就绪' : '向量化中…' }}
           </span>
           <span class="c ops">
-            <button class="link" @click="previewFile(f.name)">预览</button>
-            <button class="link" @click="reindexFile(f.id)">重建</button>
-            <button class="link danger" @click="removeFile(f.id)">删除</button>
+            <button class="link" disabled :title="UNSUPPORTED_TIP">预览</button>
+            <button class="link" disabled :title="UNSUPPORTED_TIP">重建</button>
+            <button class="link danger" disabled :title="UNSUPPORTED_TIP">删除</button>
           </span>
         </div>
       </div>
@@ -416,7 +446,7 @@ function checkAll() {
           </span>
           <div class="svc-ops">
             <button class="btn ghost sm" :disabled="s.status === 'checking'" @click="healthCheck(s)">健康检查</button>
-            <button class="btn ghost sm" :disabled="s.status === 'checking'" @click="restart(s)">重启</button>
+            <button class="btn ghost sm" disabled title="后端进程需在服务器侧重启">重启</button>
           </div>
         </div>
       </div>
@@ -541,6 +571,14 @@ function checkAll() {
 }
 .link.danger {
   color: #e11d48;
+}
+.link:disabled {
+  color: #a9b2c4;
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+.link:disabled:hover {
+  text-decoration: none;
 }
 
 /* ---------- 文件表格 ---------- */
