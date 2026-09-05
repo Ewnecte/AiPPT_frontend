@@ -136,6 +136,9 @@ async function generate() {
         addSlide,
       )
     }
+    if (slideCount.value === 0) {
+      throw new Error('未收到任何页面数据，请确认后端服务已启动且 .env 中已配置模型 Key')
+    }
     router.push('/editor')
   } catch (e) {
     errMsg.value = `内容生成失败：${(e as Error).message}（已生成 ${slideCount.value} 页）`

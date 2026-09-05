@@ -96,6 +96,9 @@ async function generate() {
         streamText.value += chunk
       })
     }
+    if (!full.trim()) {
+      throw new Error('后端未返回任何大纲内容，请确认后端服务已启动且 .env 中已配置模型 Key')
+    }
     gen.setTopic(topic.value)
     gen.setParams({ language: language.value, model: model.value, source: source.value })
     gen.setMarkdown(full)
