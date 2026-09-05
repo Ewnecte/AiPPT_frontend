@@ -10,8 +10,16 @@ npm install
 npm run dev          # http://127.0.0.1:5173
 ```
 
-> 前端通过 `vite.config.ts` 把 `/api` 代理到后端主 API（127.0.0.1:6800）。
-> 后端未就绪时，可临时把代理 target 改为 mock_api（6801）联调。
+> `src/services` 默认**直连后端主 API 网关** `http://127.0.0.1:6800`（后端各服务已开 CORS `*`，
+> 无需代理即可跨域调用）。如后端跑在其它主机/端口，或想改走 `/api` 代理，启动时用环境变量覆盖：
+>
+> ```bash
+> VITE_API_BASE=http://192.168.x.x:6800  npm run dev   # 直连其它主机
+> VITE_API_BASE=/api                      npm run dev   # 改走 vite 代理(同源)
+> ```
+>
+> 后端未配置模型 Key 时，可用 mock 联调：`cd backend/mock_api && MOCK_API_PORT=6801 python mock_main.py`，
+> 再以 `VITE_API_BASE=http://127.0.0.1:6801 npm run dev` 启动前端。
 
 ## 目录与分工建议
 
