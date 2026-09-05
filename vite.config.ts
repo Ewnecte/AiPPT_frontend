@@ -33,7 +33,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:6800',
+        // 默认指向真实主 API(6800)；无 Key 联调 mock 时可用 VITE_API_TARGET=http://127.0.0.1:6801 覆盖
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:6800',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
