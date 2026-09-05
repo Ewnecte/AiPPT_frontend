@@ -31,6 +31,12 @@ export interface ContentItem {
   title?: string
   text?: string
   kind?: 'chart' | 'image'
+  // 当 kind='chart' 时携带图表元信息（对齐 ChartItem）
+  chartType?: ChartType
+  labels?: string[]
+  series?: ChartSeries[]
+  // 当 kind='image' 时携带图片地址
+  url?: string
 }
 
 export interface SlideData {

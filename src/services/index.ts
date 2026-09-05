@@ -12,6 +12,23 @@ export async function getTemplates(): Promise<TemplateInfo[]> {
   return data.data ?? []
 }
 
+/** 知识库文件信息（GET /files/{user_id}，透传 personaldb） */
+export interface KbFileInfo {
+  file_id: string
+  file_name: string
+  file_type: string
+  folder_id?: string
+  url?: string
+}
+
+/** 获取某用户已入库的知识库文件列表 */
+export async function getFiles(userId = '1'): Promise<KbFileInfo[]> {
+  const res = await fetch(`${BASE}/files/${userId}`)
+  if (!res.ok) throw new Error('获取文件列表失败')
+  const data = await res.json()
+  return Array.isArray(data.files) ? data.files : []
+}
+
 /**
  * 大纲生成（text/plain 流式）
  * onChunk 每次收到一段文本时回调，最终返回完整大纲
@@ -225,7 +242,7 @@ export async function AIPPT_Outline_From_File(file: File, onChunk: (text: string
 }
 
 /** 按文件 id 生成 PPT（走知识库检索） */
-export async function AIPPTByID(fileId: string, onSlide: (slide: SlideSchema) => void): Promise<void> {
+export async function AIPPTByID(fileId: string, _onSlide: (slide: SlideSchema) => void): Promise<void> {
   // TODO: 参考 AIPPT_Content 的 SSE 解析实现
   throw new Error(`TODO: 实现 AIPPTByID(fileId=${fileId})`)
 }

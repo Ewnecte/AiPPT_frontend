@@ -1,24 +1,37 @@
 <script setup lang="ts">
 // 应用根组件：顶部品牌区 + 步骤流导航 + 路由出口
 // 设计规范见 SRS 3.1：紫蓝渐变 #667eea → #764ba2
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+// /screen 放映页等声明 meta.fullscreen 的路由：隐藏顶栏、全幅承载，实现真正全屏
+const isFullscreen = computed(() => Boolean(route.meta.fullscreen))
 </script>
 
 <template>
-  <div class="app">
-    <header class="topbar">
-      <div class="brand"><span class="logo">P</span> AiPPT</div>
-      <nav class="nav">
-        <router-link to="/">录入</router-link>
-        <router-link to="/ppt">模板</router-link>
-        <router-link to="/generate">生成</router-link>
-        <router-link to="/editor">编辑器</router-link>
-        <router-link to="/screen">放映</router-link>
-        <router-link to="/settings">设置</router-link>
-      </nav>
-    </header>
-    <main class="main" :class="{ wide: $route.meta.wide }">
+  <div class="app" :class="{ fullscreen: isFullscreen }">
+    <!-- 全屏路由（放映等）：不带顶栏/内边距，交给子页占满视口 -->
+    <div v-if="isFullscreen" class="fullstage">
       <router-view />
-    </main>
+    </div>
+    <!-- 常规布局：顶部品牌区 + 步骤流导航 -->
+    <template v-else>
+      <header class="topbar">
+        <div class="brand"><span class="logo">P</span> AiPPT</div>
+        <nav class="nav">
+          <router-link to="/">录入</router-link>
+          <router-link to="/ppt">模板</router-link>
+          <router-link to="/generate">生成</router-link>
+          <router-link to="/editor">编辑器</router-link>
+          <router-link to="/screen">放映</router-link>
+          <router-link to="/settings">设置</router-link>
+        </nav>
+      </header>
+      <main class="main" :class="{ wide: $route.meta.wide }">
+        <router-view />
+      </main>
+    </template>
   </div>
 </template>
 
@@ -98,5 +111,13 @@ body {
 .main.wide {
   max-width: none;
   padding: 0;
+}
+.app.fullscreen {
+  min-height: 0;
+}
+.fullstage {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
 }
 </style>
