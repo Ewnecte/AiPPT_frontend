@@ -6,11 +6,11 @@ import { useRouter } from 'vue-router'
 import { AIPPT_Content, AIPPTByID, getTemplates } from '../services'
 import type { SlideSchema, TemplateInfo } from '../types/AIPPT'
 import { useGenerationStore } from '../store/generation'
-import { useSlidesStore } from '../store/slides'
+import { useDraftStore } from '../store/slides'
 
 const router = useRouter()
 const gen = useGenerationStore()
-const slides = useSlidesStore()
+const draft = useDraftStore()
 
 const LANGUAGES = [
   { label: '简体中文', value: '中文' },
@@ -113,11 +113,11 @@ async function generate() {
   generating.value = true
   slideCount.value = 0
 
-  slides.reset()
-  slides.templateId = selectedId.value
+  draft.reset()
+  draft.setMeta({ templateId: selectedId.value })
 
   const addSlide = (slide: SlideSchema) => {
-    slides.addSlide(slide)
+    draft.pushSchema(slide)
     slideCount.value++
   }
 
