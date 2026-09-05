@@ -4,6 +4,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGenerationStore } from '../store/generation'
+import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
@@ -234,14 +235,7 @@ function saveAndGo(to: string) {
 
 <template>
   <section class="page">
-    <!-- 步骤条：P02 当前 -->
-    <div class="stepbar">
-      <router-link class="step" to="/"><i>1</i> 主题录入</router-link>
-      <span class="line"></span>
-      <div class="step active"><i>2</i> 大纲编辑</div>
-      <span class="line"></span>
-      <div class="step"><i>3</i> 选择模板</div>
-    </div>
+    <StepBar :current="2" />
 
     <!-- 空态：无大纲直达本页 -->
     <div v-if="!hasLoaded" class="card empty">
@@ -315,48 +309,6 @@ function saveAndGo(to: string) {
   flex-direction: column;
   gap: 20px;
 }
-/* 步骤条 */
-.stepbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #8a94a6;
-  font-size: 13px;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  text-decoration: none;
-  color: inherit;
-}
-.step i {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #dfe3ee;
-  color: #fff;
-  font-style: normal;
-  font-weight: 700;
-  font-size: 12px;
-  display: grid;
-  place-items: center;
-}
-.step.active {
-  color: #1f2430;
-  font-weight: 600;
-}
-.step.active i {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-}
-.line {
-  width: 44px;
-  height: 2px;
-  background: #dfe3ee;
-  border-radius: 2px;
-}
-
 .card {
   background: #fff;
   border-radius: 14px;

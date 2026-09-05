@@ -17,7 +17,9 @@
       </nav>
     </header>
     <main class="main">
-      <router-view />
+      <div class="container">
+        <router-view />
+      </div>
     </main>
   </div>
 </template>
@@ -28,6 +30,11 @@
   margin: 0;
   padding: 0;
 }
+html,
+body {
+  height: 100%;
+  overflow: hidden; /* 整页不再滚动：滚动收敛到下方内容区 .main */
+}
 body {
   font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
   background: #eef0f6;
@@ -35,14 +42,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh; /* 移动端地址栏收起时仍铺满 */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 .topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  flex: 0 0 auto; /* 固定高度，不参与内容滚动 */
   height: 60px;
   padding: 0 28px;
   display: flex;
@@ -88,10 +95,16 @@ body {
   color: #fff;
   font-weight: 600;
 }
+/* 唯一的垂直滚动容器：占满顶栏以下的剩余高度 */
 .main {
   flex: 1;
-  max-width: 1200px;
+  min-height: 0; /* 允许收缩到剩余高度，内容超高时在内部滚动 */
   width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.container {
+  max-width: 1200px;
   margin: 0 auto;
   padding: 32px 24px;
 }

@@ -1,16 +1,25 @@
 <script setup lang="ts">
 // P07 演示放映页（占位，待前端 C 实现）
+import StepBar from '../components/StepBar.vue'
 </script>
 
 <template>
-  <div class="screen">
-    <h1>演示放映</h1>
-    <p>对应原型 P07。全屏播放、演讲者视图、倒计时、画笔。</p>
-    <router-link class="back" to="/editor">← 返回编辑器</router-link>
-  </div>
+  <section class="page">
+    <StepBar :current="5" />
+    <div class="screen">
+      <h1>演示放映</h1>
+      <p>对应原型 P07。全屏播放、演讲者视图、倒计时、画笔。</p>
+      <router-link class="back" to="/editor">← 返回编辑器</router-link>
+    </div>
+  </section>
 </template>
 
 <style scoped>
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 .screen {
   background: #0f1220;
   color: #fff;

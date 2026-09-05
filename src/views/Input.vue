@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // P01 主题录入页（路由 /）
 // 输入演示主题/文档内容 → 流式生成大纲（AIPPT_Outline / AIPPT_Outline_From_File）→ 跳转 /outline
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AIPPT_Outline, AIPPT_Outline_From_File } from '../services'
 import { useGenerationStore, type GenSource } from '../store/generation'
+import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
@@ -15,6 +16,8 @@ const RECOMMENDED = [
   '公司年中总结与下半年规划',
   '新能源汽车竞争格局分析',
   '如何用 AI 提升办公效率',
+  'AI 赋能企业的落地方案',
+  '季度经营分析与年度规划',
 ]
 
 const LANGUAGES = [
@@ -37,8 +40,79 @@ const errMsg = ref('')
 const streamText = ref('')
 
 function pickTopic(suggestion: string) {
+  // 拖拽滚动后松开触发的 click 不应误选中主题
+  if (suppressClick.value) {
+    suppressClick.value = false
+    return
+  }
   topic.value = suggestion
 }
+
+/* ---------- 推荐主题横向滚动（滚轮 / 拖拽 / 左右箭头） ---------- */
+const chipsRow = ref<HTMLElement | null>(null)
+const canLeft = ref(false)
+const canRight = ref(false)
+const suppressClick = ref(false)
+
+let drag = { active: false, startX: 0, startLeft: 0, maxDx: 0 }
+
+function updateChipsArrows() {
+  const el = chipsRow.value
+  if (!el) return
+  canLeft.value = el.scrollLeft > 1
+  canRight.value = el.scrollLeft < el.scrollWidth - el.clientWidth - 1
+}
+
+function scrollChipsBy(dir: -1 | 1) {
+  chipsRow.value?.scrollBy({ left: dir * 240, behavior: 'smooth' })
+}
+
+/** 纵向滚轮 → 横向滚动；仅在内容可横向溢出时拦截，否则交给页面垂直滚动。 */
+function onChipsWheel(e: WheelEvent) {
+  const el = chipsRow.value
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+  el.scrollLeft += delta
+  updateChipsArrows()
+  e.preventDefault()
+}
+
+function onChipsPointerDown(e: PointerEvent) {
+  const el = chipsRow.value
+  if (!el) return
+  drag = { active: true, startX: e.clientX, startLeft: el.scrollLeft, maxDx: 0 }
+}
+
+function onChipsPointerMove(e: PointerEvent) {
+  if (!drag.active) return
+  const el = chipsRow.value
+  if (!el) return
+  const dx = e.clientX - drag.startX
+  drag.maxDx = Math.max(drag.maxDx, Math.abs(dx))
+  el.scrollLeft = drag.startLeft - dx
+}
+
+function endChipsDrag() {
+  if (!drag.active) return
+  if (drag.maxDx > 5) suppressClick.value = true // 有拖动则吞掉随后的 click
+  drag.active = false
+}
+
+onMounted(() => {
+  const el = chipsRow.value
+  if (!el) return
+  el.addEventListener('wheel', onChipsWheel, { passive: false })
+  el.addEventListener('scroll', updateChipsArrows, { passive: true })
+  window.addEventListener('resize', updateChipsArrows)
+  updateChipsArrows()
+})
+onUnmounted(() => {
+  const el = chipsRow.value
+  if (!el) return
+  el.removeEventListener('wheel', onChipsWheel)
+  el.removeEventListener('scroll', updateChipsArrows)
+  window.removeEventListener('resize', updateChipsArrows)
+})
 
 function onPickFile(e: Event) {
   const input = e.target as HTMLInputElement | null
@@ -145,14 +219,7 @@ function useSample() {
 
 <template>
   <section class="page">
-    <!-- 步骤条：P01 当前 -->
-    <div class="stepbar">
-      <div class="step active"><i>1</i> 主题录入</div>
-      <span class="line"></span>
-      <div class="step"><i>2</i> 大纲编辑</div>
-      <span class="line"></span>
-      <div class="step"><i>3</i> 选择模板</div>
-    </div>
+    <StepBar :current="1" />
 
     <div class="card">
       <div class="head">
@@ -173,7 +240,34 @@ function useSample() {
       ></textarea>
       <div class="meta-row">
         <div class="chips">
-          <span v-for="s in RECOMMENDED" :key="s" class="chip" @click="pickTopic(s)">💡 {{ s }}</span>
+          <button
+            type="button"
+            class="scroll-btn"
+            :disabled="!canLeft"
+            aria-label="向左滑动"
+            @click="scrollChipsBy(-1)"
+          >
+            ‹
+          </button>
+          <div
+            ref="chipsRow"
+            class="chips-row"
+            @pointerdown="onChipsPointerDown"
+            @pointermove="onChipsPointerMove"
+            @pointerup="endChipsDrag"
+            @pointerleave="endChipsDrag"
+          >
+            <span v-for="s in RECOMMENDED" :key="s" class="chip" @click="pickTopic(s)">💡 {{ s }}</span>
+          </div>
+          <button
+            type="button"
+            class="scroll-btn"
+            :disabled="!canRight"
+            aria-label="向右滑动"
+            @click="scrollChipsBy(1)"
+          >
+            ›
+          </button>
         </div>
         <span class="count">{{ topic.length }} / 5000</span>
       </div>
@@ -254,46 +348,6 @@ function useSample() {
   flex-direction: column;
   gap: 20px;
 }
-/* 步骤条 */
-.stepbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #8a94a6;
-  font-size: 13px;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.step i {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #dfe3ee;
-  color: #fff;
-  font-style: normal;
-  font-weight: 700;
-  font-size: 12px;
-  display: grid;
-  place-items: center;
-}
-.step.active {
-  color: #1f2430;
-  font-weight: 600;
-}
-.step.active i {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-}
-.line {
-  width: 44px;
-  height: 2px;
-  background: #dfe3ee;
-  border-radius: 2px;
-}
-
 .card {
   background: #fff;
   border-radius: 14px;
@@ -330,17 +384,63 @@ function useSample() {
 }
 .meta-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-top: 10px;
 }
 .chips {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.chips-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox 隐藏滚动条 */
+  padding: 2px 1px;
+  cursor: grab;
+  user-select: none;
+  touch-action: pan-y;
+}
+.chips-row::-webkit-scrollbar {
+  display: none;
+}
+.chips-row:active {
+  cursor: grabbing;
+}
+.scroll-btn {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid #e3e7f2;
+  background: #fff;
+  color: #55627c;
+  font-size: 16px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.scroll-btn:hover:not(:disabled) {
+  border-color: #667eea;
+  color: #4f46e5;
+}
+.scroll-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .chip {
+  flex: 0 0 auto;
+  white-space: nowrap;
   background: #f1f3fa;
   border: 1px solid #e3e7f2;
   color: #55627c;
