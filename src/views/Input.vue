@@ -22,7 +22,8 @@ const LANGUAGES = [
   { label: 'English', value: 'English' },
   { label: '日本語', value: '日本語' },
 ]
-const MODELS = ['qwen-turbo-latest', 'qwen-plus-latest', 'deepseek-v3']
+// 与 backend/.env 的 MODEL_PROVIDER=deepseek + LLM_MODEL=deepseek-v4-pro 对齐
+const MODELS = ['deepseek-v4-pro']
 
 // 与 store 同步：返回本页时回填上次录入
 const topic = ref(gen.topic)

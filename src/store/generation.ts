@@ -27,7 +27,7 @@ export const useGenerationStore = defineStore('generation', {
   state: () => ({
     topic: '', // 录入的主题 / 文档内容（回填用）
     language: '中文',
-    model: 'qwen-turbo-latest',
+    model: 'deepseek-v4-pro',
     markdown: '', // 权威大纲 markdown
     source: 'text' as GenSource,
     userId: loadUserId(), // 知识库命名空间，后端按 user_{userId} 隔离
@@ -60,7 +60,7 @@ export const useGenerationStore = defineStore('generation', {
     reset() {
       this.topic = ''
       this.language = '中文'
-      this.model = 'qwen-turbo-latest'
+      this.model = 'deepseek-v4-pro'
       this.markdown = ''
       this.source = 'text'
       // userId 保持稳定，不随重置清空；fileId/fileName 随新流程清空
