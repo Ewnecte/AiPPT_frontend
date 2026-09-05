@@ -3,8 +3,8 @@
 // 加载模板列表 → 选择版式 → 调 AIPPT_Content(SSE) 逐页生成 → 进入 /editor
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { AIPPT_Content, getTemplates } from '../services'
-import type { TemplateInfo } from '../types/AIPPT'
+import { AIPPT_Content, AIPPTByID, getTemplates } from '../services'
+import type { SlideSchema, TemplateInfo } from '../types/AIPPT'
 import { useGenerationStore } from '../store/generation'
 import { useSlidesStore } from '../store/slides'
 
@@ -56,8 +56,10 @@ function pickDefault() {
 }
 
 /* ---------------- 配置与大纲摘要 ---------------- */
-const webSearch = ref(false)
 const language = ref(gen.language)
+// 信息来源：none=不检索 / web=联网检索 / file=上传资料（后端按已入库文件做知识库检索）
+const infoSrc = ref<'none' | 'web' | 'file'>('none')
+const hasUploadedFile = computed(() => Boolean(gen.fileId))
 
 const markdown = computed(() => gen.markdown)
 const hasOutline = computed(() => markdown.value.trim().length > 0)
@@ -83,6 +85,12 @@ function chooseLanguage(v: string) {
   gen.setParams({ language: v })
 }
 
+/** 切换信息来源；「上传资料」需先在本会话录入页上传过文档（有 fileId）。 */
+function pickInfo(v: 'none' | 'web' | 'file') {
+  if (v === 'file' && !hasUploadedFile.value) return
+  infoSrc.value = v
+}
+
 /* ---------------- 内容生成 ---------------- */
 const generating = ref(false)
 const slideCount = ref(0)
@@ -91,9 +99,13 @@ const errMsg = ref('')
 // 有可用模板时必须显式选择模板或「默认版式」；无模板（空/加载失败）时直接允许默认版式
 const hasTemplates = computed(() => templates.value.length > 0)
 const selectionMade = computed(() => selectedId.value !== '' || choseDefault.value)
-const canGenerate = computed(
-  () => hasOutline.value && !generating.value && (hasTemplates.value ? selectionMade.value : true),
-)
+const canGenerate = computed(() => {
+  if (generating.value) return false
+  const selectionOK = hasTemplates.value ? selectionMade.value : true
+  // 上传资料路径由后端按 fileId 取文档生成，不再依赖本页大纲
+  if (infoSrc.value === 'file') return hasUploadedFile.value && selectionOK
+  return hasOutline.value && selectionOK
+})
 
 async function generate() {
   if (generating.value || !hasOutline.value) return
@@ -103,14 +115,27 @@ async function generate() {
 
   slides.reset()
   slides.templateId = selectedId.value
+
+  const addSlide = (slide: SlideSchema) => {
+    slides.addSlide(slide)
+    slideCount.value++
+  }
+
   try {
-    await AIPPT_Content(markdown.value, {
-      language: language.value,
-      generateFromWebSearch: webSearch.value,
-    }, (slide) => {
-      slides.addSlide(slide)
-      slideCount.value++
-    })
+    if (infoSrc.value === 'file' && hasUploadedFile.value) {
+      // 上传资料：走后端 /tools/aippt_by_id，从知识库按 fileId 取文档检索生成
+      await AIPPTByID(gen.fileId, { userId: gen.userId }, addSlide)
+    } else {
+      // 文本大纲（不检索 / 联网检索）：全部交给后端 /tools/aippt
+      await AIPPT_Content(
+        markdown.value,
+        {
+          language: language.value,
+          generateFromWebSearch: infoSrc.value === 'web',
+        },
+        addSlide,
+      )
+    }
     router.push('/editor')
   } catch (e) {
     errMsg.value = `内容生成失败：${(e as Error).message}（已生成 ${slideCount.value} 页）`
@@ -214,10 +239,20 @@ async function generate() {
           <div class="setting">
             <span class="setting-name">信息来源</span>
             <div class="seg">
-              <button :class="{ on: !webSearch }" :disabled="generating" @click="webSearch = false">不检索</button>
-              <button :class="{ on: webSearch }" :disabled="generating" @click="webSearch = true">联网检索</button>
-              <button class="disabled" title="即将支持" disabled>上传资料</button>
+              <button :class="{ on: infoSrc === 'none' }" :disabled="generating" @click="infoSrc = 'none'">不检索</button>
+              <button :class="{ on: infoSrc === 'web' }" :disabled="generating" @click="infoSrc = 'web'">联网检索</button>
+              <button
+                :class="{ on: infoSrc === 'file' }"
+                :disabled="generating || !hasUploadedFile"
+                :title="hasUploadedFile ? '基于已上传文档由后端检索生成' : '需先在录入页上传文档'"
+                @click="pickInfo('file')"
+              >
+                上传资料
+              </button>
             </div>
+            <p v-if="infoSrc === 'file'" class="file-note">
+              {{ hasUploadedFile ? `将基于已上传文档「${gen.fileName}」由后端检索生成` : '尚未上传文档，请先到录入页选择「上传文档」' }}
+            </p>
           </div>
           <div class="setting">
             <label class="setting-name" for="lang">内容语言</label>
@@ -536,6 +571,11 @@ h1 {
 .setting-name {
   font-size: 13px;
   color: #55627c;
+}
+.file-note {
+  font-size: 12px;
+  color: #8a94a6;
+  max-width: 320px;
 }
 .seg {
   display: inline-flex;

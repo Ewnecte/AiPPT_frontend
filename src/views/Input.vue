@@ -51,6 +51,12 @@ function clearAll() {
   streamText.value = ''
   done.value = false
   errMsg.value = ''
+  gen.clearUploadedFile()
+}
+
+/** 生成一次上传会话的唯一 fileId（后端按 userId + fileId 入库 / 检索）。 */
+function nextFileId(): string {
+  return `file_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
 async function generate() {
@@ -71,10 +77,19 @@ async function generate() {
   loading.value = true
   try {
     let full = ''
+    let uploaded: { fileId: string; fileName: string } | null = null
     if (source.value === 'file' && pickedFile.value) {
-      full = await AIPPT_Outline_From_File(pickedFile.value, (chunk) => {
-        streamText.value += chunk
-      })
+      // 上传文件生成大纲：随表单带上 userId/fileId，让后端把该文件入库，
+      // 记录 fileId 供 P03 选「上传资料」时按文件检索生成。
+      const fileId = nextFileId()
+      full = await AIPPT_Outline_From_File(
+        pickedFile.value,
+        { userId: gen.userId, fileId, language: language.value },
+        (chunk) => {
+          streamText.value += chunk
+        },
+      )
+      uploaded = { fileId, fileName: pickedFile.value.name }
     } else {
       full = await AIPPT_Outline(topic.value, language.value, model.value, (chunk) => {
         streamText.value += chunk
@@ -83,6 +98,8 @@ async function generate() {
     gen.setTopic(topic.value)
     gen.setParams({ language: language.value, model: model.value, source: source.value })
     gen.setMarkdown(full)
+    if (uploaded) gen.setUploadedFile(uploaded.fileId, uploaded.fileName)
+    else gen.clearUploadedFile()
     done.value = true
   } catch (e) {
     errMsg.value = `生成失败：${(e as Error).message}`
@@ -118,6 +135,7 @@ function useSample() {
   gen.setTopic(topic.value || 'AI 大模型行业趋势报告')
   gen.setParams({ language: language.value, model: model.value, source: 'text' })
   gen.setMarkdown(SAMPLE_MARKDOWN)
+  gen.clearUploadedFile() // 载入示例 = 放弃文档库路径
   router.push('/outline')
 }
 </script>
