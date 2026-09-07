@@ -9,6 +9,9 @@ import 'animate.css'
 import '@ppt/assets/styles/prosemirror.scss'
 import '@ppt/assets/styles/global.scss'
 import '@ppt/assets/styles/font.scss'
+// 全局页面滚动/滚动条样式：必须在 PPTist 的 global.scss 之后引入，
+// 用于覆盖它对 html/body 的 overflow:hidden 锁定，恢复整页滚动。
+import './global.css'
 
 import Directive from '@ppt/directive'
 

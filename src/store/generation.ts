@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 
-// 「主题录入 → 大纲编辑 → 模板选择」向导的跨页共享状态（P01/P02/P03）
-// markdown 是权威大纲结果：P01 生成后写入，P02 编辑后覆盖写回，P03 读取做内容生成。
+// 「大纲生成 → 大纲编辑 → 选择模板」向导的跨页共享状态（P01/P02/P03）
+// markdown 是权威大纲结果：P01 生成后写入，P02 编辑后覆盖写回，P03 读取并连同模板
+// 配置交接给 P04（见 draft store 的 meta）做 PPT 逐页生成。
 // userId/fileId 用于「上传文档 → 知识库检索 → 生成 PPT」链路：P01 上传时生成唯一
 // fileId 并写库，P03 选择「上传资料」来源时用它调用后端 /tools/aippt_by_id。
 
@@ -27,7 +28,7 @@ export const useGenerationStore = defineStore('generation', {
   state: () => ({
     topic: '', // 录入的主题 / 文档内容（回填用）
     language: '中文',
-    model: 'deepseek-v4-pro',
+    model: 'deepseek-chat',
     markdown: '', // 权威大纲 markdown
     source: 'text' as GenSource,
     userId: loadUserId(), // 知识库命名空间，后端按 user_{userId} 隔离
@@ -60,7 +61,7 @@ export const useGenerationStore = defineStore('generation', {
     reset() {
       this.topic = ''
       this.language = '中文'
-      this.model = 'deepseek-v4-pro'
+      this.model = 'deepseek-chat'
       this.markdown = ''
       this.source = 'text'
       // userId 保持稳定，不随重置清空；fileId/fileName 随新流程清空

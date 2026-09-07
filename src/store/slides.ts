@@ -25,7 +25,8 @@ export interface GenMeta {
   outline: string
   templateId: string
   language: string
-  source: 'web' | 'file' | 'kb'
+  // 内容信息来源：none=不检索 / web=联网检索 / file=基于已上传文档(知识库)生成 / kb=知识库检索
+  source: 'none' | 'web' | 'file' | 'kb'
 }
 
 const EMPTY_META: GenMeta = {
@@ -33,7 +34,7 @@ const EMPTY_META: GenMeta = {
   outline: '',
   templateId: '',
   language: '中文',
-  source: 'web',
+  source: 'none',
 }
 
 interface Snapshot {

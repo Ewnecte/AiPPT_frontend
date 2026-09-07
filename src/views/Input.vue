@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// P01 主题录入页（路由 /）
+// P01 大纲生成页（路由 /，四步流程第 1 步：大纲生成）
 // 输入演示主题/文档内容 → 流式生成大纲（AIPPT_Outline / AIPPT_Outline_From_File）→ 跳转 /outline
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AIPPT_Outline, AIPPT_Outline_From_File } from '../services'
 import { useGenerationStore, type GenSource } from '../store/generation'
+import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
@@ -22,8 +23,10 @@ const LANGUAGES = [
   { label: 'English', value: 'English' },
   { label: '日本語', value: '日本語' },
 ]
-// 与 backend/.env 的 MODEL_PROVIDER=deepseek + LLM_MODEL=deepseek-v4-pro 对齐
-const MODELS = ['deepseek-v4-pro']
+// 与 backend/.env 的 MODEL_PROVIDER=deepseek + LLM_MODEL=deepseek-chat 对齐
+// 说明：deepseek-chat 为快速对话模型（无静默思考期），大纲/PPT 生成响应更快；
+//       如追求更强的推理质量可改回 deepseek-v4-pro（首字等待会明显变长）。
+const MODELS = ['deepseek-chat']
 
 // 与 store 同步：返回本页时回填上次录入
 const topic = ref(gen.topic)
@@ -146,14 +149,8 @@ function useSample() {
 
 <template>
   <section class="page">
-    <!-- 步骤条：P01 当前 -->
-    <div class="stepbar">
-      <div class="step active"><i>1</i> 主题录入</div>
-      <span class="line"></span>
-      <div class="step"><i>2</i> 大纲编辑</div>
-      <span class="line"></span>
-      <div class="step"><i>3</i> 选择模板</div>
-    </div>
+    <!-- 统一四步步骤条：P01 大纲生成 当前 -->
+    <StepBar :current="1" />
 
     <div class="card">
       <div class="head">
@@ -254,45 +251,6 @@ function useSample() {
   display: flex;
   flex-direction: column;
   gap: 20px;
-}
-/* 步骤条 */
-.stepbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #8a94a6;
-  font-size: 13px;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.step i {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #dfe3ee;
-  color: #fff;
-  font-style: normal;
-  font-weight: 700;
-  font-size: 12px;
-  display: grid;
-  place-items: center;
-}
-.step.active {
-  color: #1f2430;
-  font-weight: 600;
-}
-.step.active i {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-}
-.line {
-  width: 44px;
-  height: 2px;
-  background: #dfe3ee;
-  border-radius: 2px;
 }
 
 .card {

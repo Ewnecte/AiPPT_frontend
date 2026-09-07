@@ -1,15 +1,19 @@
 <script setup lang="ts">
-// P04 逐页内容生成 / PPT 生成进度页
+// P04 PPT 生成页（路由 /generate，四步流程的第四步）
 // ------------------------------------------------------------------
-// 从 store 取大纲(可改)与模板，调用 main_api 的 /tools/aippt（SSE）逐页生成；
+// 从 draft store 读取大纲(可改)与模板、来源配置，调用 main_api 逐页生成；
+// 模板选择页（/ppt）点「生成演示文稿」后跳转本页并自动开始生成；
 // 后端不可达时自动降级为内置演示数据（离线 Demo）。
 // 生成过程中实时显示：当前状态、进度条、逐页缩略图与事件日志；
 // 完成后可进入编辑器 / 重新生成。
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDraftStore } from '../store/slides'
-import { AIPPT_StreamEvents } from '../services'
+import { useGenerationStore } from '../store/generation'
+import { AIPPT_StreamEvents, AIPPTByID } from '../services'
+import type { SlideSchema } from '../types/AIPPT'
 import SlideViewer from '../components/SlideViewer.vue'
+import StepBar from '../components/StepBar.vue'
 import {
   SAMPLE_OUTLINE,
   SLIDE_TYPE_LABELS,
@@ -19,10 +23,13 @@ import {
 } from '../utils/aippt'
 
 const store = useDraftStore()
+const gen = useGenerationStore()
 const router = useRouter()
 
-const outline = ref(store.meta.outline || '')
-const useWebSearch = ref(false)
+// 大纲初值：优先模板页写入的 draft meta，其次取 generation store 中的权威大纲
+const outline = ref(store.meta.outline || gen.markdown || '')
+const useWebSearch = ref(store.meta.source === 'web')
+const language = ref(store.meta.language || gen.language || '中文')
 const phase = ref<'idle' | 'connecting' | 'generating' | 'done' | 'error'>('idle')
 const mode = ref<'real' | 'demo'>('real')
 const statusText = ref('')
@@ -33,6 +40,11 @@ const openedOutline = ref(false)
 
 let controller: AbortController | null = null
 const pageTitle = computed(() => parseOutline(outline.value || SAMPLE_OUTLINE).title)
+// 顶部标题：上传资料来源优先展示文档名，其次用模板页带过来的标题
+const deckTitle = computed(() => {
+  if (store.meta.source === 'file' && gen.fileName) return gen.fileName
+  return store.meta.title || pageTitle.value
+})
 const estimated = computed(() => (outline.value.trim() ? estimateSlideCount(outline.value) : 0))
 const progress = computed(() => {
   const total = estimated.value || store.slideCount
@@ -40,6 +52,8 @@ const progress = computed(() => {
   return Math.min(100, Math.round((store.slideCount / total) * 100))
 })
 const running = computed(() => phase.value === 'generating' || phase.value === 'connecting')
+// 是否处于「上传资料」知识库来源（由模板选择页配置），生成不依赖大纲文本
+const kbMode = computed(() => store.meta.source === 'file' && Boolean(gen.fileId))
 
 watch(outline, (v) => {
   if (v !== store.meta.outline) store.setMeta({ outline: v, title: parseOutline(v).title })
@@ -63,7 +77,8 @@ function delay(ms: number): Promise<void> {
 async function begin() {
   if (running.value) return
   const md = outline.value.trim()
-  if (!md) {
+  // 「上传资料」来源按知识库 fileId 生成，不强制要求本页有大纲文本
+  if (!kbMode.value && !md) {
     notice.value = '请先在上方输入或粘贴 Markdown 大纲，或填入示例大纲。'
     openedOutline.value = true
     return
@@ -71,7 +86,14 @@ async function begin() {
   aborted.value = false
   notice.value = ''
   logs.value = []
-  store.seedSlides([], { outline: md, title: pageTitle.value, templateId: store.meta.templateId, source: store.meta.source })
+  const metaPatch = {
+    outline: md,
+    title: store.meta.title || pageTitle.value,
+    templateId: store.meta.templateId,
+    language: language.value,
+    source: store.meta.source,
+  }
+  store.seedSlides([], metaPatch)
   store.setGenerating(true)
   phase.value = 'connecting'
   setStatus('正在连接内容生成服务…')
@@ -85,20 +107,45 @@ async function begin() {
     // 后端不可达 -> 降级演示数据
     mode.value = 'demo'
     pushLog('无法连接后端(main_api :6800)，已切换到内置演示数据。')
-    store.seedSlides([], { outline: md, title: pageTitle.value, templateId: store.meta.templateId, source: store.meta.source })
+    store.seedSlides([], metaPatch)
     await runDemo(md)
     if (aborted.value) return
     finishOk()
   }
 }
 
+/** 逐页回调：写入草稿并更新状态（生成中追加一页） */
+function onSlide(slide: SlideSchema) {
+  store.pushSchema(slide)
+  const label = SLIDE_TYPE_LABELS[slide.type] ?? slide.type
+  setStatus(`已生成第 ${store.slideCount} 页 · ${label}`)
+}
+
 async function runReal(md: string) {
   mode.value = 'real'
+
+  if (kbMode.value) {
+    // 上传资料：后端从知识库按 fileId 取回文档做检索增强生成（不依赖本页大纲）
+    pushLog('正在读取知识库文档并逐页生成…')
+    controller = null
+    await AIPPTByID(
+      gen.fileId,
+      { userId: gen.userId, model: gen.model },
+      (slide) => {
+        if (aborted.value) return
+        onSlide(slide)
+      },
+    )
+    pushLog('知识库文档内容生成完成。')
+    return
+  }
+
   controller = new AbortController()
   await AIPPT_StreamEvents(
     md,
     {
-      language: 'zh',
+      language: language.value,
+      model: gen.model, // 显式传生成模型（与大纲配置一致），不依赖后端进程环境兜底
       generateFromWebSearch: useWebSearch.value,
       generateFromUploadedFile: store.meta.source === 'file',
       signal: controller.signal,
@@ -109,9 +156,8 @@ async function runReal(md: string) {
         pushLog(text)
       },
       onSlide: (slide) => {
-        store.pushSchema(slide)
-        const label = SLIDE_TYPE_LABELS[slide.type] ?? slide.type
-        setStatus(`已生成第 ${store.slideCount} 页 · ${label}`)
+        if (aborted.value) return
+        onSlide(slide)
       },
       onDone: () => pushLog('收到 [DONE]：内容生成完成'),
     },
@@ -171,6 +217,14 @@ function backTemplates() {
   router.push('/ppt')
 }
 
+// 由 /ppt（选择模板）跳转而来：大纲/上传资料已就绪且未生成过 → 自动开始 PPT 生成
+onMounted(() => {
+  if (phase.value !== 'idle' || store.generating || store.slides.length > 0) return
+  const hasTask = Boolean(outline.value.trim()) || kbMode.value
+  if (!hasTask) return
+  void begin()
+})
+
 onBeforeUnmount(() => {
   aborted.value = true
   try {
@@ -184,13 +238,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="generate">
-    <!-- 顶部步骤条 -->
-    <div class="steps">
-      <div class="step done"><span class="dot">✓</span> 录入大纲</div>
-      <div class="step done"><span class="dot">✓</span> 选择模板</div>
-      <div class="step active"><span class="dot">{{ running ? '…' : '3' }}</span> 逐页生成</div>
-      <div :class="['step', phase === 'done' ? 'active' : '']"><span class="dot">4</span> 在线编辑</div>
-    </div>
+    <!-- 统一四步步骤条：P04 PPT生成 当前（完成后整条点亮） -->
+    <StepBar :current="4" :done="phase === 'done' ? 4 : 3" />
 
     <div class="body">
       <!-- 左列：大纲 / 控制 -->
@@ -201,13 +250,14 @@ onBeforeUnmount(() => {
           <span v-else-if="phase !== 'idle'" class="tag">{{ mode === 'real' ? '真实接口' : '待机' }}</span>
         </div>
 
-        <div class="deck-title">📄 {{ pageTitle }}</div>
+        <div class="deck-title">📄 {{ deckTitle }}</div>
 
         <div class="row">
           <label class="lbl">数据来源</label>
-          <label class="radio"><input v-model="useWebSearch" type="checkbox" /> 联网检索扩充内容</label>
+          <label class="radio"><input v-model="useWebSearch" type="checkbox" :disabled="kbMode" /> 联网检索扩充内容</label>
           <span v-if="store.meta.templateId" class="badge">模板 {{ store.meta.templateId }}</span>
-          <span class="badge">{{ store.meta.language || '中文' }}</span>
+          <span class="badge">{{ language }}</span>
+          <span v-if="kbMode" class="badge kb">知识库 · {{ gen.fileName }}</span>
         </div>
 
         <button class="text-btn" type="button" @click="openedOutline = !openedOutline">
@@ -272,45 +322,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-}
-.steps {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-radius: 999px;
-  background: #fff;
-  color: #9aa0b4;
-  font-size: 13px;
-  font-weight: 600;
-  border: 1px solid #eceef5;
-}
-.step .dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #e4e7f0;
-  color: #7b8499;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-}
-.step.done .dot {
-  background: #10b981;
-  color: #fff;
-}
-.step.active {
-  border-color: rgba(102, 126, 234, 0.5);
-  color: #4338ca;
-}
-.step.active .dot {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  color: #fff;
 }
 .body {
   display: grid;
@@ -377,6 +388,10 @@ onBeforeUnmount(() => {
   background: #f3f4fb;
   border-radius: 8px;
   padding: 4px 10px;
+}
+.badge.kb {
+  color: #b45309;
+  background: #fff3e0;
 }
 .text-btn {
   border: none;

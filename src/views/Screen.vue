@@ -16,7 +16,8 @@ import { useRouter } from 'vue-router'
 import { useDraftStore } from '../store/slides'
 import { useMainStore, useSlidesStore } from '@ppt/store'
 import { useScreenStore } from '@ppt/store/screen'
-import { makeBlankCover, schemasToPptistSlides } from '../utils/schemaToPptist'
+import { getTemplateData } from '../services'
+import { makeBlankCover, schemasToPptistSlides, type DeckTheme } from '../utils/schemaToPptist'
 import type { Slide } from '@ppt/types/slides'
 import PptScreen from '@ppt/views/Screen/index.vue'
 
@@ -34,6 +35,33 @@ function titleFromDraft(): string {
   return t || '未命名演示文稿'
 }
 
+/** 与编辑器页同款：按模板选择页存下的 templateId 拉取模板主题色 */
+const themeCache = new Map<string, DeckTheme | null>()
+async function resolveTheme(): Promise<DeckTheme | null> {
+  const id = draftStore.meta.templateId?.trim()
+  if (!id) return null
+  const cached = themeCache.get(id)
+  if (cached !== undefined) return cached
+  let theme: DeckTheme | null = null
+  try {
+    const deck = await getTemplateData(id)
+    const t = deck.theme
+    if (t && Array.isArray(t.themeColors) && t.themeColors.length) {
+      theme = {
+        name: deck.name || t.name,
+        themeColors: t.themeColors,
+        backgroundColor: t.backgroundColor,
+        fontColor: t.fontColor,
+        fontName: t.fontName,
+      }
+    }
+  } catch {
+    theme = null
+  }
+  themeCache.set(id, theme)
+  return theme
+}
+
 function installDeck(slides: Slide[], title: string) {
   slidesStore.setSlides(slides.length ? slides : [makeBlankCover(title)])
   slidesStore.setTitle(title)
@@ -48,16 +76,17 @@ function installDeck(slides: Slide[], title: string) {
   mainStore.setActiveElementIdList([])
 }
 
-function ensureDeck(): boolean {
+async function ensureDeck(): Promise<boolean> {
   // 已在 PPTist 中的 deck（含编辑器里的修改）优先，从头开始放映
   if (slidesStore.slides.length) {
     slidesStore.updateSlideIndex(0)
     return true
   }
-  // 尚未打开过编辑器：由外层 draft 还原
+  // 尚未打开过编辑器：由外层 draft 还原（套用所选模板主题色）
   const schemas = draftStore.exportSchemas()
   if (!schemas.length) return false
-  installDeck(schemasToPptistSlides(schemas), titleFromDraft())
+  const theme = await resolveTheme()
+  installDeck(schemasToPptistSlides(schemas, theme), titleFromDraft())
   return true
 }
 
@@ -69,8 +98,9 @@ watch(
   },
 )
 
-onMounted(() => {
-  if (ensureDeck()) {
+onMounted(async () => {
+  const ok = await ensureDeck()
+  if (ok) {
     ready.value = true
     screenStore.setScreening(true)
   }

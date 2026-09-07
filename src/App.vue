@@ -20,10 +20,10 @@ const isFullscreen = computed(() => Boolean(route.meta.fullscreen))
       <header class="topbar">
         <div class="brand"><span class="logo">P</span> AiPPT</div>
         <nav class="nav">
-          <router-link to="/">录入</router-link>
-          <router-link to="/outline">大纲</router-link>
-          <router-link to="/ppt">模板</router-link>
-          <router-link to="/generate">生成</router-link>
+          <router-link to="/">大纲生成</router-link>
+          <router-link to="/outline">大纲编辑</router-link>
+          <router-link to="/ppt">选择模板</router-link>
+          <router-link to="/generate">PPT生成</router-link>
           <router-link to="/editor">编辑器</router-link>
           <router-link to="/screen">放映</router-link>
           <router-link to="/settings">设置</router-link>

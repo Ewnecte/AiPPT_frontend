@@ -1,12 +1,15 @@
 <script setup lang="ts">
 // P03 模板选择页（路由 /ppt）
-// 加载模板列表 → 选择版式 → 调 AIPPT_Content(SSE) 逐页生成 → 进入 /editor
+// 加载模板列表 → 选择版式 → 点击「生成演示文稿」把大纲与模板等配置写入 draft store，
+// 跳转到 /generate（P04 PPT 生成页）由该页流式逐页生成 → 完成后再进入 /editor
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { AIPPT_Content, AIPPTByID, getTemplates } from '../services'
-import type { SlideSchema, TemplateInfo } from '../types/AIPPT'
+import { getTemplates } from '../services'
+import type { TemplateInfo } from '../types/AIPPT'
 import { useGenerationStore } from '../store/generation'
 import { useDraftStore } from '../store/slides'
+import { parseOutline } from '../utils/aippt'
+import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
@@ -91,73 +94,50 @@ function pickInfo(v: 'none' | 'web' | 'file') {
   infoSrc.value = v
 }
 
-/* ---------------- 内容生成 ---------------- */
-const generating = ref(false)
-const slideCount = ref(0)
+/* ---------------- 内容生成入口 ---------------- */
 const errMsg = ref('')
 
 // 有可用模板时必须显式选择模板或「默认版式」；无模板（空/加载失败）时直接允许默认版式
 const hasTemplates = computed(() => templates.value.length > 0)
 const selectionMade = computed(() => selectedId.value !== '' || choseDefault.value)
 const canGenerate = computed(() => {
-  if (generating.value) return false
   const selectionOK = hasTemplates.value ? selectionMade.value : true
   // 上传资料路径由后端按 fileId 取文档生成，不再依赖本页大纲
   if (infoSrc.value === 'file') return hasUploadedFile.value && selectionOK
   return hasOutline.value && selectionOK
 })
 
-async function generate() {
-  if (generating.value || !hasOutline.value) return
+/** 确认配置后跳转 /generate（PPT 生成页）执行逐页生成。 */
+function startGeneration() {
   errMsg.value = ''
-  generating.value = true
-  slideCount.value = 0
+  if (hasTemplates.value && !selectionMade.value) {
+    errMsg.value = '请先选择一套模板，或使用默认版式。'
+    return
+  }
+  if (infoSrc.value !== 'file' && !hasOutline.value) {
+    errMsg.value = '还没有大纲，无法生成内容，请先完成大纲生成/编辑。'
+    return
+  }
 
+  const md = markdown.value
+  const plan = parseOutline(md)
+  // 生成配置写入 draft meta：/generate 页据此（自动）开始生成，无需再选一遍
   draft.reset()
-  draft.setMeta({ templateId: selectedId.value })
-
-  const addSlide = (slide: SlideSchema) => {
-    draft.pushSchema(slide)
-    slideCount.value++
-  }
-
-  try {
-    if (infoSrc.value === 'file' && hasUploadedFile.value) {
-      // 上传资料：走后端 /tools/aippt_by_id，从知识库按 fileId 取文档检索生成
-      await AIPPTByID(gen.fileId, { userId: gen.userId }, addSlide)
-    } else {
-      // 文本大纲（不检索 / 联网检索）：全部交给后端 /tools/aippt
-      await AIPPT_Content(
-        markdown.value,
-        {
-          language: language.value,
-          generateFromWebSearch: infoSrc.value === 'web',
-        },
-        addSlide,
-      )
-    }
-    if (slideCount.value === 0) {
-      throw new Error('未收到任何页面数据，请确认后端服务已启动且 .env 中已配置模型 Key')
-    }
-    router.push('/editor')
-  } catch (e) {
-    errMsg.value = `内容生成失败：${(e as Error).message}（已生成 ${slideCount.value} 页）`
-  } finally {
-    generating.value = false
-  }
+  draft.setMeta({
+    outline: md,
+    title: plan.title && plan.title !== '未命名演示' ? plan.title : gen.topic.trim() || '未命名演示文稿',
+    templateId: selectedId.value,
+    language: language.value,
+    source: infoSrc.value, // none | web | file
+  })
+  router.push('/generate')
 }
 </script>
 
 <template>
   <section class="page">
-    <!-- 步骤条：P03 当前 -->
-    <div class="stepbar">
-      <router-link class="step" to="/"><i>1</i> 主题录入</router-link>
-      <span class="line"></span>
-      <router-link class="step" to="/outline"><i>2</i> 大纲编辑</router-link>
-      <span class="line"></span>
-      <div class="step active"><i>3</i> 选择模板</div>
-    </div>
+    <!-- 统一四步步骤条：P03 选择模板 当前 -->
+    <StepBar :current="3" />
 
     <!-- 工具条 -->
     <div class="card toolbar">
@@ -242,11 +222,11 @@ async function generate() {
           <div class="setting">
             <span class="setting-name">信息来源</span>
             <div class="seg">
-              <button :class="{ on: infoSrc === 'none' }" :disabled="generating" @click="infoSrc = 'none'">不检索</button>
-              <button :class="{ on: infoSrc === 'web' }" :disabled="generating" @click="infoSrc = 'web'">联网检索</button>
+              <button :class="{ on: infoSrc === 'none' }" @click="infoSrc = 'none'">不检索</button>
+              <button :class="{ on: infoSrc === 'web' }" @click="infoSrc = 'web'">联网检索</button>
               <button
                 :class="{ on: infoSrc === 'file' }"
-                :disabled="generating || !hasUploadedFile"
+                :disabled="!hasUploadedFile"
                 :title="hasUploadedFile ? '基于已上传文档由后端检索生成' : '需先在录入页上传文档'"
                 @click="pickInfo('file')"
               >
@@ -259,7 +239,7 @@ async function generate() {
           </div>
           <div class="setting">
             <label class="setting-name" for="lang">内容语言</label>
-            <select id="lang" :value="language" class="select" :disabled="generating" @change="chooseLanguage(($event.target as HTMLSelectElement).value)">
+            <select id="lang" :value="language" class="select" @change="chooseLanguage(($event.target as HTMLSelectElement).value)">
               <option v-for="l in LANGUAGES" :key="l.value" :value="l.value">{{ l.label }}</option>
             </select>
           </div>
@@ -267,15 +247,9 @@ async function generate() {
       </div>
 
       <div class="panel-right">
-        <button class="btn primary big" :disabled="!canGenerate" @click="generate">
-          {{
-            generating
-              ? `⏳ 正在生成内容…（已生成 ${slideCount} 页）`
-              : '✨ 生成演示文稿'
-          }}
-        </button>
+        <button class="btn primary big" :disabled="!canGenerate" @click="startGeneration">✨ 生成演示文稿</button>
         <p class="side-hint">
-          {{ sideHint }}，生成完成后自动进入编辑器。
+          {{ sideHint }}。点击后进入 PPT 生成页，开始按大纲逐页生成。
         </p>
       </div>
     </div>
@@ -289,47 +263,6 @@ async function generate() {
   display: flex;
   flex-direction: column;
   gap: 20px;
-}
-/* 步骤条 */
-.stepbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #8a94a6;
-  font-size: 13px;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  text-decoration: none;
-  color: inherit;
-}
-.step i {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #dfe3ee;
-  color: #fff;
-  font-style: normal;
-  font-weight: 700;
-  font-size: 12px;
-  display: grid;
-  place-items: center;
-}
-.step.active {
-  color: #1f2430;
-  font-weight: 600;
-}
-.step.active i {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-}
-.line {
-  width: 44px;
-  height: 2px;
-  background: #dfe3ee;
-  border-radius: 2px;
 }
 
 .card {

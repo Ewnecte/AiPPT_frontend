@@ -19,7 +19,8 @@ import { useRouter } from 'vue-router'
 import { useDraftStore } from '../store/slides'
 import type { SlideSchema } from '../types/AIPPT'
 import { SAMPLE_OUTLINE, parseOutline, schemasFromOutline } from '../utils/aippt'
-import { makeBlankCover, schemasToPptistSlides } from '../utils/schemaToPptist'
+import { getTemplateData } from '../services'
+import { makeBlankCover, schemasToPptistSlides, type DeckTheme } from '../utils/schemaToPptist'
 import type { Slide } from '../pptist/types/slides'
 
 import PptEditor from '@ppt/views/Editor/index.vue'
@@ -43,6 +44,35 @@ const phase = ref<'loading' | 'empty' | 'ready'>('loading')
 // 记录上一次装载的来源，避免导航往返时重复覆盖用户已在 PPTist 里的编辑。
 // 'demo' = 载入过内置演示数据；否则为对应的一次性外层草稿数组引用。
 let lastLoadedSource: unknown = null
+
+// 模板主题缓存（按 templateId），避免每次进入编辑器重复拉取
+const themeCache = new Map<string, DeckTheme | null>()
+
+/** 依据模板选择页存下的 templateId 拉取模板 theme；无模板/失败返回 null（用内置紫蓝）。 */
+async function resolveTheme(): Promise<DeckTheme | null> {
+  const id = draftStore.meta.templateId?.trim()
+  if (!id) return null
+  const cached = themeCache.get(id)
+  if (cached !== undefined) return cached
+  let theme: DeckTheme | null = null
+  try {
+    const deck = await getTemplateData(id)
+    const t = deck.theme
+    if (t && Array.isArray(t.themeColors) && t.themeColors.length) {
+      theme = {
+        name: deck.name || t.name,
+        themeColors: t.themeColors,
+        backgroundColor: t.backgroundColor,
+        fontColor: t.fontColor,
+        fontName: t.fontName,
+      }
+    }
+  } catch {
+    theme = null // 拉取失败不影响进入编辑器，回落默认主题
+  }
+  themeCache.set(id, theme)
+  return theme
+}
 
 // ---------------------------------------------------------------- 装载
 function titleFromDraft(): string {
@@ -69,15 +99,16 @@ async function installDeck(slides: Slide[], title: string) {
   await snapshotStore.initSnapshotDatabase()
 }
 
-async function installSchemas(schemas: SlideSchema[], title: string) {
-  const slides = schemasToPptistSlides(schemas)
+async function installSchemas(schemas: SlideSchema[], title: string, theme?: DeckTheme | null) {
+  const slides = schemasToPptistSlides(schemas, theme ?? null)
   await installDeck(slides, title)
 }
 
-/** 由外层 draft store 还原并装载（重新生成后才触发） */
+/** 由外层 draft store 还原并装载（重新生成后才触发），并应用所选模板主题色 */
 async function loadFromDraft() {
   const schemas = draftStore.exportSchemas()
-  await installSchemas(schemas, titleFromDraft())
+  const theme = await resolveTheme()
+  await installSchemas(schemas, titleFromDraft(), theme)
 }
 
 /** 无草稿时载入内置演示大纲，快速体验编辑器 */
@@ -85,13 +116,14 @@ async function loadDemo() {
   const md = SAMPLE_OUTLINE
   const schemas = schemasFromOutline(md)
   const title = parseOutline(md).title?.trim() || '演示文稿'
-  await installSchemas(schemas, title)
+  await installSchemas(schemas, title, null)
   lastLoadedSource = 'demo'
   phase.value = 'ready'
 }
 
 function goGenerate() {
-  router.push('/generate')
+  // 新的四步流程以「大纲生成」为第一步，从这里重新开始生成
+  router.push('/')
 }
 
 onMounted(async () => {
@@ -141,11 +173,11 @@ onBeforeUnmount(() => {
         <div class="empty-icon">✍️</div>
         <h2>还没有可编辑的幻灯片</h2>
         <p class="empty-tip">
-          先去「生成」页输入大纲生成 PPT，进入编辑器后可逐页精修、
-          添加图文图表并导出；也可用内置演示数据先快速体验。
+          按「大纲生成 → 大纲编辑 → 选择模板 → PPT生成」走完流程后进入本编辑器，
+          可逐页精修、添加图文图表并导出；也可用内置演示数据先快速体验。
         </p>
         <div class="empty-actions">
-          <button class="btn primary" type="button" @click="goGenerate">先去生成内容</button>
+          <button class="btn primary" type="button" @click="goGenerate">去生成演示文稿</button>
           <button class="btn ghost" type="button" @click="loadDemo">载入内置演示数据</button>
         </div>
       </div>

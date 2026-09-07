@@ -1,0 +1,50 @@
+/* ============================================================
+ * 全局页面样式（必须在 main.ts 中、PPTist 的 global.scss 之后引入）
+ * ------------------------------------------------------------
+ * 1. 恢复整页滚动：PPTist 的 global.scss 会把
+ *      html, body { height: 100%; overflow: hidden }
+ *    整页锁死、无法滚动；这里在它之后覆盖，恢复页面级纵向滚动。
+ * 2. 全局滚动条统一：页面右侧竖条 + 所有内部滚动容器同款样式。
+ * ============================================================ */
+
+html,
+body {
+  /* 取消 PPTist 的 100% 固定高度，让文档高度随内容增长 */
+  height: auto;
+  /* 恢复页面纵向滚动，同时禁止横向溢出（避免编辑器等宽内容撑出横向条） */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body {
+  /* 全局浅灰底（PPTist global.scss 会把 body 背景置为 #fff） */
+  background: #eef0f6;
+}
+
+/* ---- Firefox：细滚动条 + 品牌色 ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #8d9bee transparent;
+}
+
+/* ---- WebKit（Chrome / Edge / Safari）：统一轨道与滑块样式 ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #93a4f0, #a78ce8);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #667eea, #8a63d2);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

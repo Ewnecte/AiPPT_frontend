@@ -59,6 +59,83 @@ export async function getFiles(userId = '1'): Promise<KbFileInfo[]> {
   return Array.isArray(data.files) ? data.files : []
 }
 
+/** 从失败的 fetch 响应中尽量提取后端错误文案（兼容 {"error": "..."} / {"detail": "..."}）。 */
+async function errMessage(res: Response, fallback: string): Promise<Error> {
+  try {
+    const data = await res.json()
+    const msg =
+      typeof data?.error === 'string'
+        ? data.error
+        : typeof data?.detail === 'string'
+          ? data.detail
+          : ''
+    if (msg) return new Error(msg)
+  } catch {
+    // 非 JSON 响应体，忽略
+  }
+  return new Error(fallback)
+}
+
+/** 生成本次入库会话的唯一 fileId（后端按 userId + fileId 入库 / 检索）。 */
+export function nextKbFileId(): string {
+  return `file_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** personaldb /upload/ 的入库结果（chunks=0 表示未能解析出可向量化文本）。 */
+export interface KbUploadResult {
+  file_id: string
+  file_name: string
+  file_type: string
+  chunks: number
+  markdown_content: string
+}
+
+/**
+ * 上传本地文件入库知识库（POST /files/upload，main_api 透传 personaldb /upload/）。
+ * 成功后文件会进入个人知识库（分块 + 向量化 + 完整 Markdown 落盘）。
+ */
+export async function uploadKbFile(
+  file: File,
+  options: { userId?: string; fileId?: string } = {},
+): Promise<KbUploadResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('userId', options.userId ?? '1')
+  form.append('fileId', options.fileId ?? nextKbFileId())
+  const res = await fetch(toUrl('/files/upload'), { method: 'POST', body: form })
+  if (!res.ok) throw await errMessage(res, `上传失败(${res.status})`)
+  return (await res.json()) as KbUploadResult
+}
+
+/** 通过 URL 入库知识库（需后端可解析的网页 / 文档直链）。 */
+export async function uploadKbUrl(
+  url: string,
+  options: { userId?: string; fileId?: string } = {},
+): Promise<KbUploadResult> {
+  if (!/^https?:\/\//i.test(url)) throw new Error('链接需以 http(s):// 开头')
+  const form = new FormData()
+  form.append('url', url)
+  form.append('userId', options.userId ?? '1')
+  form.append('fileId', options.fileId ?? nextKbFileId())
+  const res = await fetch(toUrl('/files/upload'), { method: 'POST', body: form })
+  if (!res.ok) throw await errMessage(res, `链接入库失败(${res.status})`)
+  return (await res.json()) as KbUploadResult
+}
+
+/** 读取某用户某文件的完整 Markdown 内容（用于预览 / 内容展示）。 */
+export async function getKbFileMarkdown(userId: string, fileId: string): Promise<string> {
+  const res = await fetch(toUrl(`/file/${userId}/${fileId}`))
+  if (!res.ok) throw await errMessage(res, '获取文件内容失败')
+  const data = await res.json()
+  return typeof data?.markdown_content === 'string' ? data.markdown_content : ''
+}
+
+/** 删除某用户下某文件（Chroma 分块 + 完整原文一并删除）。 */
+export async function deleteKbFile(userId: string, fileId: string): Promise<void> {
+  const res = await fetch(toUrl(`/file/${userId}/${fileId}`), { method: 'DELETE' })
+  if (!res.ok) throw await errMessage(res, `删除失败(${res.status})`)
+}
+
 /** 消费一段 SSE 响应：按行解析 `data: <payload>`，遇到 `data: [DONE]` 即止。 */
 async function consumeSSE(res: Response, onData: (payload: string) => void): Promise<void> {
   if (!res.body) throw new Error('响应无流')
@@ -113,16 +190,29 @@ export async function AIPPT_Outline(
 /**
  * 逐页内容生成（SSE，末尾 data: [DONE]）
  * onSlide 每收到一页 JSON 时回调一次
+ * model：显式指定生成模型（与后端 env 的 PPT_WRITER_MODEL 一致时最省事；
+ *       传了即以它为准，与「大纲生成」保持同一个模型配置）
  */
 export async function AIPPT_Content(
   markdown: string,
-  options: { language?: string; generateFromWebSearch?: boolean; generateFromUploadedFile?: boolean } = {},
+  options: {
+    language?: string
+    generateFromWebSearch?: boolean
+    generateFromUploadedFile?: boolean
+    model?: string
+  } = {},
   onSlide: (slide: SlideSchema) => void,
 ): Promise<void> {
   const res = await fetch(toUrl('/tools/aippt'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ content: markdown, language: options.language ?? 'zh', ...options }),
+    body: JSON.stringify({
+      content: markdown,
+      language: options.language ?? 'zh',
+      generateFromWebSearch: options.generateFromWebSearch ?? false,
+      generateFromUploadedFile: options.generateFromUploadedFile ?? false,
+      ...(options.model ? { model: options.model } : {}),
+    }),
   })
   if (!res.ok) throw new Error('内容生成请求失败')
   await consumeSSE(res, (payload) => {
@@ -156,6 +246,7 @@ export async function AIPPT_StreamEvents(
     language?: string
     generateFromWebSearch?: boolean
     generateFromUploadedFile?: boolean
+    model?: string
     signal?: AbortSignal
   } = {},
   handlers: StreamHandlers,
@@ -168,6 +259,7 @@ export async function AIPPT_StreamEvents(
       language: options.language ?? 'zh',
       generateFromWebSearch: options.generateFromWebSearch ?? false,
       generateFromUploadedFile: options.generateFromUploadedFile ?? false,
+      ...(options.model ? { model: options.model } : {}),
     }),
     signal: options.signal,
   })
@@ -285,10 +377,10 @@ export async function AIPPT_Outline_From_File(
 }
 
 /** 按文件 id 生成 PPT（SSE）：后端从知识库取回该文件文档，走检索增强生成。
- *  对应后端网关 POST /tools/aippt_by_id。 */
+ *  对应后端网关 POST /tools/aippt_by_id。model 可显式指定生成模型。 */
 export async function AIPPTByID(
   fileId: string,
-  options: { userId?: string; generateFromWebSearch?: boolean } = {},
+  options: { userId?: string; generateFromWebSearch?: boolean; model?: string } = {},
   onSlide: (slide: SlideSchema) => void,
 ): Promise<void> {
   const res = await fetch(toUrl('/tools/aippt_by_id'), {
@@ -298,6 +390,7 @@ export async function AIPPTByID(
       fileId,
       userId: options.userId ?? '1',
       generateFromWebSearch: options.generateFromWebSearch ?? false,
+      ...(options.model ? { model: options.model } : {}),
     }),
   })
   if (!res.ok) throw new Error('文档内容生成请求失败')
@@ -308,4 +401,23 @@ export async function AIPPTByID(
       // 忽略无法解析的行
     }
   })
+}
+
+/** 拉取某套模板的完整 JSON（main_api /data/{id}.json），含 theme 主题色/字体等。 */
+export interface TemplateTheme {
+  name?: string
+  themeColors?: string[]
+  fontColor?: string
+  fontName?: string
+  backgroundColor?: string
+}
+export interface TemplateDeckData {
+  name?: string
+  title?: string
+  theme?: TemplateTheme
+}
+export async function getTemplateData(id: string): Promise<TemplateDeckData> {
+  const res = await fetch(toUrl(`/data/${encodeURIComponent(id)}.json`))
+  if (!res.ok) throw new Error('模板数据获取失败')
+  return (await res.json()) as TemplateDeckData
 }

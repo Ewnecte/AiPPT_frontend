@@ -2,12 +2,20 @@
 // P08 知识库 / 系统设置页
 // 三个 Tab：① 知识库文件列表 ② 系统配置（模型供应商 / Embedding） ③ 服务状态。
 //
-// 后端接入位置（供接口联调时替换，注释不进界面）：
-//  ① 文件列表：kbFiles / 上传 / 重建 / 删除 → personaldb 的 GET /files/{user_id}、POST /upload、DELETE /files/{file_id}
+// 后端接入位置：
+//  ① 文件列表：GET /files/{user_id}、上传 POST /files/upload、读取 GET /file/{user_id}/{file_id}、
+//     删除 DELETE /file/{user_id}/{file_id} → main_api:6800 透传 personaldb
 //  ② 配置保存：saveAllConfig → 系统配置读写接口（当前为 localStorage 占位）
 //  ③ 服务状态：services 数组 → 各服务 GET /healthz
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { getFiles } from '../services'
+import {
+  deleteKbFile,
+  getFiles,
+  getKbFileMarkdown,
+  uploadKbFile,
+  uploadKbUrl,
+} from '../services'
+import type { KbUploadResult } from '../services'
 
 /* ================= 通用轻量 toast ================= */
 interface Toast {
@@ -32,8 +40,9 @@ const tab = ref<Tab>('files')
 /* ================= ① 知识库文件列表 ================= */
 // 数据源：GET /api/files/{userId}（main_api:6800 透传 personaldb）。后端文件字段仅
 // file_id / file_name / file_type / folder_id / url，故“大小/分块/上传时间”以「—」展示。
-// 上传 / 预览 / 重建 / 删除：main_api 未开放对应端点（个人后端不可改），按“仅文档能力”
-// 的口径置灰并悬停说明；刷新按钮会真正拉取后端列表。
+// 上传（本地文件 / URL）→ POST /files/upload；预览 → GET /file/{user_id}/{file_id} 返回的
+// Markdown 文本；删除 → DELETE /file/{user_id}/{file_id}。三者均已接通。
+// “重建”后端无独立重向量化接口（原始文件也未保留），保持置灰：先删除后重新上传即可。
 interface KbFile {
   id: string
   name: string
@@ -43,18 +52,108 @@ interface KbFile {
   updatedAt: string
   status: 'ready'
 }
+const USER_ID = '1'
 const kbFiles = ref<KbFile[]>([])
 const kbLoading = ref(false)
 const kbKeyword = ref('')
-const UNSUPPORTED_TIP = '后端未提供该接口（知识库当前仅开放文件列表）'
+const REINDEX_TIP = '后端未提供重建接口：如需重新向量化，可先删除该文件，再重新上传'
 const filteredFiles = computed(() =>
   kbFiles.value.filter((f) => f.name.toLowerCase().includes(kbKeyword.value.toLowerCase())),
 )
 
+// —— 上传（文件 / URL）——
+const fileInput = ref<HTMLInputElement | null>(null)
+const kbUploading = ref(false)
+const showUrlRow = ref(false)
+const kbUrl = ref('')
+function openFilePicker() {
+  fileInput.value?.click()
+}
+async function handleFilePick(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 允许重复选择同一文件
+  if (!file) return
+  const ok = `「${file.name}」已上传并入库`
+  const empty = `「${file.name}」已入库，但未解析出可向量化文本（可能不会出现在列表中）`
+  await doUpload(() => uploadKbFile(file, { userId: USER_ID }), ok, empty)
+}
+async function uploadFromUrl() {
+  const url = kbUrl.value.trim()
+  if (!url) return
+  const ok = await doUpload(
+    () => uploadKbUrl(url, { userId: USER_ID }),
+    '链接已抓取并入库',
+    '链接已抓取入库，但未解析出可向量化文本（可能不会出现在列表中）',
+  )
+  if (ok) {
+    kbUrl.value = ''
+    showUrlRow.value = false
+  }
+}
+async function doUpload(
+  action: () => Promise<KbUploadResult>,
+  okText: string,
+  zeroChunkTip: string,
+): Promise<boolean> {
+  if (kbUploading.value) return false
+  kbUploading.value = true
+  try {
+    const result = await action()
+    showToast(result.chunks > 0 ? okText : zeroChunkTip, result.chunks > 0 ? 'success' : 'warn')
+    await fetchKb()
+    return true
+  } catch (e) {
+    showToast(`入库失败：${(e as Error).message}`, 'warn')
+    return false
+  } finally {
+    kbUploading.value = false
+  }
+}
+
+// —— 预览 / 删除 ——
+const rowBusyId = ref('') // 行内操作进行中的文件 id（防重复点击）
+const preview = reactive({ show: false, title: '', body: '', loading: false })
+async function previewFile(f: KbFile) {
+  if (rowBusyId.value) return
+  rowBusyId.value = f.id
+  preview.show = true
+  preview.loading = true
+  preview.title = f.name
+  preview.body = ''
+  try {
+    const md = await getKbFileMarkdown(USER_ID, f.id)
+    preview.body = md || '（该文件未能解析出文本内容）'
+  } catch (e) {
+    preview.body = `加载失败：${(e as Error).message}`
+  } finally {
+    preview.loading = false
+    rowBusyId.value = ''
+  }
+}
+function closePreview() {
+  preview.show = false
+}
+async function removeFile(f: KbFile) {
+  if (rowBusyId.value) return
+  if (!window.confirm(`确认删除「${f.name}」？将同时移除其向量分块与原文，删除后不可恢复。`)) return
+  rowBusyId.value = f.id
+  try {
+    await deleteKbFile(USER_ID, f.id)
+    if (preview.show && preview.title === f.name) closePreview()
+    showToast(`已删除「${f.name}」`)
+    await fetchKb()
+  } catch (e) {
+    showToast(`删除失败：${(e as Error).message}`, 'warn')
+  } finally {
+    rowBusyId.value = ''
+  }
+}
+
 async function fetchKb() {
   kbLoading.value = true
   try {
-    const list = await getFiles('1')
+    const list = await getFiles(USER_ID)
     kbFiles.value = list.map((f) => ({
       id: f.file_id,
       name: f.file_name || f.file_id,
@@ -75,19 +174,6 @@ async function fetchKb() {
 
 function refreshFiles() {
   fetchKb()
-}
-// 以下操作后端未提供端点，仅置灰；保留桩函数避免任何意外触发时报错
-function triggerUpload() {
-  showToast('上传不可用：后端未提供文件入库接口', 'warn')
-}
-function previewFile(_name?: string) {
-  showToast('预览不可用：后端未提供文件内容接口', 'warn')
-}
-function reindexFile(_id?: string) {
-  showToast('重建不可用：后端未提供重建接口', 'warn')
-}
-function removeFile(_id?: string) {
-  showToast('删除不可用：后端未提供删除接口', 'warn')
 }
 
 /* ================= ② 系统配置 ================= */
@@ -279,10 +365,35 @@ watch(tab, (t) => {
     <div v-if="tab === 'files'" class="panel">
       <div class="toolbar">
         <input v-model="kbKeyword" class="search" placeholder="搜索文件名…" />
-        <button class="btn ghost" :disabled="kbLoading" @click="refreshFiles">
+        <button class="btn ghost" :disabled="kbLoading || kbUploading" @click="refreshFiles">
           {{ kbLoading ? '加载中…' : '↻ 刷新' }}
         </button>
-        <button class="btn primary" disabled :title="UNSUPPORTED_TIP">＋ 上传文件</button>
+        <button class="btn ghost" :disabled="kbUploading" @click="showUrlRow = !showUrlRow">
+          {{ showUrlRow ? '✕ 收起' : '🔗 链接入库' }}
+        </button>
+        <button class="btn primary" :disabled="kbUploading" @click="openFilePicker">
+          {{ kbUploading ? '上传中…' : '＋ 上传文件' }}
+        </button>
+        <input
+          ref="fileInput"
+          type="file"
+          class="hidden-file"
+          accept=".txt,.md,.markdown,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.html,.csv,.json,.png,.jpg,.jpeg,.webp,.mp3,.wav"
+          @change="handleFilePick"
+        />
+      </div>
+
+      <div v-if="showUrlRow" class="url-row">
+        <input
+          v-model="kbUrl"
+          class="search"
+          placeholder="粘贴网页 / 文档直链（http(s)://），回车或点击入库…"
+          @keyup.enter="uploadFromUrl"
+        />
+        <button class="btn primary sm" :disabled="kbUploading || !kbUrl.trim()" @click="uploadFromUrl">
+          {{ kbUploading ? '入库中…' : '入库' }}
+        </button>
+        <button class="btn ghost sm" :disabled="kbUploading" @click="showUrlRow = false; kbUrl = ''">取消</button>
       </div>
 
       <div class="table">
@@ -301,7 +412,7 @@ watch(tab, (t) => {
               ? '正在从知识库服务加载文件…'
               : kbFiles.length
                 ? '没有匹配的文件。'
-                : '知识库暂无入库文件：在「生成」页通过「上传文件」生成的文档会展示在此。'
+                : '知识库暂无入库文件：可点击「上传文件」直接上传，或在「生成」页通过「上传文件」生成时自动入库。'
           }}
         </div>
         <div v-for="f in filteredFiles" :key="f.id" class="tr">
@@ -315,13 +426,18 @@ watch(tab, (t) => {
             {{ f.status === 'ready' ? '已就绪' : '向量化中…' }}
           </span>
           <span class="c ops">
-            <button class="link" disabled :title="UNSUPPORTED_TIP">预览</button>
-            <button class="link" disabled :title="UNSUPPORTED_TIP">重建</button>
-            <button class="link danger" disabled :title="UNSUPPORTED_TIP">删除</button>
+            <button class="link" :disabled="!!rowBusyId" @click="previewFile(f)">预览</button>
+            <button class="link" disabled :title="REINDEX_TIP">重建</button>
+            <button class="link danger" :disabled="!!rowBusyId" @click="removeFile(f)">
+              {{ rowBusyId === f.id ? '处理中…' : '删除' }}
+            </button>
           </span>
         </div>
       </div>
-      <p class="table-note">文件由知识库服务统一解析、分块并向量化，支持 PDF / Word / PPT / Markdown / 图片 / 音频等格式。</p>
+      <p class="table-note">
+        文件由知识库服务统一解析、分块并向量化，支持 PDF / Word / PPT / Markdown / 图片 / 音频等格式。
+        预览展示的是后端解析出的 Markdown 文本；「重建」需先删除后重新上传。
+      </p>
     </div>
 
     <!-- ==================== Tab2 系统配置 ==================== -->
@@ -448,6 +564,24 @@ watch(tab, (t) => {
             <button class="btn ghost sm" :disabled="s.status === 'checking'" @click="healthCheck(s)">健康检查</button>
             <button class="btn ghost sm" disabled title="后端进程需在服务器侧重启">重启</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 文件预览弹层 ==================== -->
+    <div v-if="preview.show" class="modal-mask" @click.self="closePreview">
+      <div class="modal">
+        <div class="modal-head">
+          <strong class="modal-title" :title="preview.title">📄 {{ preview.title }}</strong>
+          <button class="modal-x" @click="closePreview">✕</button>
+        </div>
+        <div class="modal-body">
+          <p v-if="preview.loading" class="modal-hint">正在读取解析后的 Markdown 内容…</p>
+          <pre v-else class="modal-pre">{{ preview.body }}</pre>
+        </div>
+        <div class="modal-foot">
+          <span class="modal-hint">预览内容为知识库服务解析后的 Markdown 文本（非原始文件）。</span>
+          <button class="btn ghost sm" @click="closePreview">关闭</button>
         </div>
       </div>
     </div>
@@ -660,6 +794,98 @@ watch(tab, (t) => {
   color: #a9b2c4;
   font-size: 12px;
   margin-top: 12px;
+}
+
+/* ---------- 上传（隐藏文件输入 / URL 行） ---------- */
+.hidden-file {
+  display: none;
+}
+.url-row {
+  display: flex;
+  gap: 8px;
+  margin: -6px 0 14px;
+}
+.url-row .search {
+  flex: 1;
+  min-width: 200px;
+}
+
+/* ---------- 预览弹层 ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  padding: 30px;
+}
+.modal {
+  background: #fff;
+  border-radius: 14px;
+  width: min(860px, 92vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 60px rgba(20, 24, 40, 0.35);
+  overflow: hidden;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #eef0f6;
+}
+.modal-title {
+  font-size: 15px;
+  color: #1f2430;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-x {
+  border: none;
+  background: #f1f3f9;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  color: #55607a;
+  flex: none;
+}
+.modal-x:hover {
+  background: #e2e6f2;
+}
+.modal-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  min-height: 120px;
+}
+.modal-pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1f2430;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Consolas', 'Menlo', 'Courier New', monospace;
+}
+.modal-hint {
+  margin: 0;
+  color: #a9b2c4;
+  font-size: 12px;
+}
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  border-top: 1px solid #eef0f6;
 }
 
 /* ---------- 配置表单 ---------- */
