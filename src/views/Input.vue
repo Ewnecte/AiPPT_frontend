@@ -149,6 +149,7 @@ async function generate() {
   }
 
   loading.value = true
+  gen.setBusy(true) // 流式生成期间全局锁定跳转（顶栏/步骤条灰化 + 路由守卫拦截）
   try {
     let full = ''
     let uploaded: { fileId: string; fileName: string } | null = null
@@ -182,6 +183,7 @@ async function generate() {
     errMsg.value = `生成失败：${(e as Error).message}`
   } finally {
     loading.value = false
+    gen.setBusy(false) // 无论成功/失败都要解锁，允许继续跳转
   }
 }
 

@@ -1,6 +1,19 @@
 <script setup lang="ts">
 // 应用根组件：顶部品牌区 + 步骤流导航 + 路由出口
 // 设计规范见 SRS 3.1：紫蓝渐变 #667eea → #764ba2
+import { onMounted, onUnmounted } from 'vue'
+import { useGenerationStore } from './store/generation'
+
+const gen = useGenerationStore()
+
+// 生成中(busy)刷新或关闭标签会直接丢失流式结果，用原生事件兜底弹「离开确认」。
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (!gen.busy) return
+  e.preventDefault()
+  e.returnValue = '' // 触发浏览器原生离开确认框
+}
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
+onUnmounted(() => window.removeEventListener('beforeunload', onBeforeUnload))
 </script>
 
 <template>
@@ -8,12 +21,13 @@
     <header class="topbar">
       <div class="brand"><span class="logo">P</span> AiPPT</div>
       <nav class="nav">
-        <router-link to="/">录入</router-link>
-        <router-link to="/outline">大纲</router-link>
-        <router-link to="/ppt">模板</router-link>
-        <router-link to="/editor">编辑器</router-link>
-        <router-link to="/screen">放映</router-link>
-        <router-link to="/settings">设置</router-link>
+        <span v-if="gen.busy" class="lockchip" title="大纲正在流式生成，请勿切换或关闭页面">🔒 生成中</span>
+        <router-link to="/" :class="{ locked: gen.busy }">录入</router-link>
+        <router-link to="/outline" :class="{ locked: gen.busy }">大纲</router-link>
+        <router-link to="/ppt" :class="{ locked: gen.busy }">模板</router-link>
+        <router-link to="/editor" :class="{ locked: gen.busy }">编辑器</router-link>
+        <router-link to="/screen" :class="{ locked: gen.busy }">放映</router-link>
+        <router-link to="/settings" :class="{ locked: gen.busy }">设置</router-link>
       </nav>
     </header>
     <main class="main">
@@ -89,6 +103,21 @@ body {
 }
 .nav a:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+/* 生成中锁态：链接灰化且不可点击（路由守卫另有兜底，防后退/直达） */
+.nav a.locked {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.lockchip {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  margin-right: 2px;
 }
 .nav a.router-link-active {
   background: rgba(255, 255, 255, 0.22);

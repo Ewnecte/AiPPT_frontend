@@ -33,10 +33,17 @@ export const useGenerationStore = defineStore('generation', {
     userId: loadUserId(), // 知识库命名空间，后端按 user_{userId} 隔离
     fileId: '', // 本会话已入库的文件 id（有值才允许走「上传资料」检索生成）
     fileName: '', // 已入库文件的原始名，仅用于界面提示
+    // 向导正在向后端流式生成（大纲/内容）期间置 true：此时全局锁定页面跳转，
+    // 保证流式结果完整落回当前页（见 router 前置守卫与顶栏锁态）。
+    busy: false,
   }),
   actions: {
     setTopic(topic: string) {
       this.topic = topic
+    },
+    /** 置「正在生成」标记：true = 锁定页面跳转（含顶栏/步骤条/后退刷新），结束(成功或失败)时置回 false。 */
+    setBusy(busy: boolean) {
+      this.busy = busy
     },
     setParams(params: { language?: string; model?: string; source?: GenSource }) {
       if (params.language !== undefined) this.language = params.language
