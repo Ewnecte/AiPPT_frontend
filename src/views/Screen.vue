@@ -16,7 +16,7 @@ import { useRouter } from 'vue-router'
 import { useDraftStore } from '../store/slides'
 import { useMainStore, useSlidesStore } from '@ppt/store'
 import { useScreenStore } from '@ppt/store/screen'
-import { getTemplateData } from '../services'
+import { loadDeckTheme } from '../utils/theme'
 import { makeBlankCover, schemasToPptistSlides, type DeckTheme } from '../utils/schemaToPptist'
 import type { Slide } from '@ppt/types/slides'
 import PptScreen from '@ppt/views/Screen/index.vue'
@@ -35,29 +35,16 @@ function titleFromDraft(): string {
   return t || '未命名演示文稿'
 }
 
-/** 与编辑器页同款：按模板选择页存下的 templateId 拉取模板主题色 */
+/** 与编辑器页同款：优先用草稿里已载入的模板主题，否则按 templateId 拉取 */
 const themeCache = new Map<string, DeckTheme | null>()
 async function resolveTheme(): Promise<DeckTheme | null> {
+  const fromMeta = draftStore.meta.templateTheme
+  if (fromMeta) return fromMeta
   const id = draftStore.meta.templateId?.trim()
   if (!id) return null
   const cached = themeCache.get(id)
   if (cached !== undefined) return cached
-  let theme: DeckTheme | null = null
-  try {
-    const deck = await getTemplateData(id)
-    const t = deck.theme
-    if (t && Array.isArray(t.themeColors) && t.themeColors.length) {
-      theme = {
-        name: deck.name || t.name,
-        themeColors: t.themeColors,
-        backgroundColor: t.backgroundColor,
-        fontColor: t.fontColor,
-        fontName: t.fontName,
-      }
-    }
-  } catch {
-    theme = null
-  }
+  const theme = await loadDeckTheme(id)
   themeCache.set(id, theme)
   return theme
 }

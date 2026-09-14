@@ -13,7 +13,7 @@ import type {
   SlideData,
   SlideSchema,
 } from '../types/AIPPT'
-import { accentAt, uid } from './aippt'
+import { accentAt, uid, type DeckTheme } from './aippt'
 import type {
   PPTChartElement,
   PPTElement,
@@ -31,14 +31,9 @@ export const VIEW_H = 1000 * 0.5625 // 562.5
 // ------------------------------------------------------------------
 // 主题 / 调色板
 // ------------------------------------------------------------------
-/** 模板 theme（来自后端 template_*.json 的 theme 节点，字段均可选） */
-export interface DeckTheme {
-  name?: string
-  themeColors?: string[]
-  backgroundColor?: string
-  fontColor?: string
-  fontName?: string
-}
+// DeckTheme 统一在 utils/aippt.ts 定义（含模板各类页面背景色采样），这里复用并转出，
+// 保证「生成页预览」与「编辑器成稿」用同一份主题数据。
+export type { DeckTheme } from './aippt'
 
 /** 排版用调色板（由模板 theme 生成，缺省回落内置默认值） */
 interface Palette {
@@ -46,12 +41,17 @@ interface Palette {
   ink: string // 浅底正文（标题/要点）
   sub: string // 浅底次要文字
   faint: string // 弱文字 / 页码
-  darkText: string // 深底正文（通常白）
-  deep: string // 深页背景（cover）
-  deepAlt: string // 深页背景（transition）
-  deepEnd: string // 深页背景（end）
-  top: string // 深页顶部色带
-  bar: string // 深底亮色装饰条
+  coverBg: string // 封面背景
+  coverText: string // 封面正文色（按底色深浅自动黑/白）
+  coverSub: string // 封面副标题色
+  coverBar: string // 封面装饰条
+  transBg: string // 过渡页背景
+  transText: string // 过渡页正文色
+  transSub: string // 过渡页副标题色
+  transBar: string // 过渡页装饰条
+  endBg: string // 结束页背景
+  endText: string // 结束页正文色
+  top: string // 深页顶部色带（模板主色）
   accentFor(i: number): string // 每页主题主色（accent）
 }
 
@@ -102,22 +102,53 @@ function buildPalette(theme?: DeckTheme | null): Palette {
   const c0 = colors[0] || DEFAULT_COLORS[0]
   const c1 = colors[1] || DEFAULT_COLORS[1]
 
-  const paper = validHex(theme?.backgroundColor) ? (theme!.backgroundColor as string) : DEFAULT_PAPER
+  // 内容页底色：优先模板里的内容页背景；再按主色做极淡染色，让模板差异在每页都可见
+  const rawPaper = validHex(theme?.backgrounds?.content)
+    ? (theme!.backgrounds!.content as string)
+    : validHex(theme?.backgroundColor)
+      ? (theme!.backgroundColor as string)
+      : DEFAULT_PAPER
+  const paper = theme ? mixToward(rawPaper, c0, 0.05) : rawPaper
   const dark = luminance(paper) < 0.45
   const ink = validHex(theme?.fontColor) && !dark ? (theme!.fontColor as string) : dark ? '#ffffff' : DEFAULT_INK
+
+  // 封面/结束：优先用模板 deck 里对应页面的真实背景色（模板主色），否则由主色派生深色
+  const coverBg = validHex(theme?.backgrounds?.cover)
+    ? (theme!.backgrounds!.cover as string)
+    : mixToward(c0, '#0d0a24', dark ? 0.35 : 0.66)
+  const endBg = validHex(theme?.backgrounds?.end)
+    ? (theme!.backgrounds!.end as string)
+    : mixToward(c0, '#0d0a24', dark ? 0.42 : 0.74)
+  // 过渡页：模板背景若是浅色（如白底）则改用次主色压暗，保证白字可读；否则直接用
+  const rawTrans = validHex(theme?.backgrounds?.transition)
+    ? (theme!.backgrounds!.transition as string)
+    : ''
+  const transBg =
+    rawTrans && luminance(rawTrans) < 0.6 ? rawTrans : mixToward(c1, '#0d0a24', 0.5)
+
+  // 与预览端保持一致：底色偏深（含模板的饱和主色封面）用白字，浅底用模板字体色
+  const fg = (bg: string) => (luminance(bg) < 0.6 ? '#ffffff' : ink)
+  const subOf = (bg: string) =>
+    luminance(bg) < 0.6 ? 'rgba(255,255,255,0.82)' : 'rgba(31,35,64,0.72)'
+  const barOf = (bg: string) =>
+    luminance(bg) < 0.6 ? mixToward(c0, '#ffffff', 0.55) : mixToward(c0, '#000000', 0.2)
 
   return {
     paper,
     ink,
     sub: dark ? 'rgba(255,255,255,0.75)' : '#5b6275',
     faint: dark ? 'rgba(255,255,255,0.45)' : '#9aa2b5',
-    darkText: '#ffffff',
-    // 深底页：主色向深压暗，保证白字可读且保留模板色相
-    deep: mixToward(c0, '#0d0a24', dark ? 0.35 : 0.66),
-    deepAlt: mixToward(c1, '#0d0a24', dark ? 0.3 : 0.58),
-    deepEnd: mixToward(c0, '#0d0a24', dark ? 0.42 : 0.74),
+    coverBg,
+    coverText: fg(coverBg),
+    coverSub: subOf(coverBg),
+    coverBar: barOf(coverBg),
+    transBg,
+    transText: fg(transBg),
+    transSub: subOf(transBg),
+    transBar: barOf(transBg),
+    endBg,
+    endText: fg(endBg),
     top: c0,
-    bar: mixToward(c0, '#ffffff', 0.55),
     accentFor: (i) => (colors.length ? colors[i % colors.length] : accentAt(i)),
   }
 }
@@ -244,6 +275,46 @@ function num(n: number): string {
 }
 
 // ------------------------------------------------------------------
+// 文本自适应（防重叠）
+// ------------------------------------------------------------------
+// 思路：按「字数 × 字号 vs 可用宽度」估算行数与高度，逐级缩小字号；
+// 仍放不下就截断条目并加省略提示，保证任何输入都不会互相压字。
+/** 中日韩字符按 1 个字宽计，其余（英文/数字/标点）按 0.56 计 */
+function charWeight(ch: string): number {
+  return ch.charCodeAt(0) > 0x2e80 ? 1 : 0.56
+}
+function weightedLen(text: string): number {
+  let n = 0
+  for (const ch of text) n += charWeight(ch)
+  return n
+}
+/** 估算文本在给定字号与宽度下的行数 */
+function estimateLines(text: string, fontSize: number, width: number): number {
+  if (!text) return 0
+  const perLine = Math.max(1, width / fontSize)
+  return Math.max(1, Math.ceil(weightedLen(text) / perLine))
+}
+/** 超过 maxLines 行时截断并加省略号 */
+function truncateToLines(text: string, fontSize: number, width: number, maxLines: number): string {
+  const perLine = Math.max(1, Math.floor(width / fontSize)) * maxLines
+  let n = 0
+  let out = ''
+  for (const ch of text) {
+    n += charWeight(ch)
+    if (n > perLine - 1) return `${out.replace(/\s+$/, '')}…`
+    out += ch
+  }
+  return text
+}
+/** 选一个能容纳标题的字号（最多 2 行） */
+function pickTitleSize(text: string, width: number, sizes: number[]): number {
+  for (const s of sizes) {
+    if (estimateLines(text, s, width) <= 2) return s
+  }
+  return sizes[sizes.length - 1]
+}
+
+// ------------------------------------------------------------------
 // 各类页面版式
 // ------------------------------------------------------------------
 interface LayoutCtx {
@@ -256,35 +327,54 @@ interface LayoutCtx {
 }
 type ElementsFactory = (ctx: LayoutCtx) => { elements: PPTElement[]; background?: SlideBackground }
 
-function titleHeader(data: SlideData, accent: string, y: number, palette: Palette): PPTElement[] {
+/** 页面标题块：标题过长自动缩字号并向下顺延装饰线，返回正文起始 Y（防重叠） */
+function titleHeader(
+  data: SlideData,
+  accent: string,
+  y: number,
+  palette: Palette,
+): { els: PPTElement[]; bottom: number } {
   const els: PPTElement[] = []
-  if (data.title) {
-    els.push(textEl({
-      x: 100, y, w: 800, h: 68,
-      html: para(data.title, { size: 40, color: palette.ink, bold: true }),
-      valign: 'middle',
-    }, palette.ink))
-    els.push(rect({ x: 100, y: y + 74, w: 64, h: 7, color: accent, radius: 3 }))
-  }
-  return els
+  const title = (data.title || '').trim()
+  if (!title) return { els, bottom: y + 10 }
+  const width = 800
+  const size = pickTitleSize(title, width, [40, 34, 28, 24, 20])
+  const lines = estimateLines(title, size, width)
+  const h = Math.round(lines * size * 1.32)
+  els.push(textEl({
+    x: 100, y, w: width, h,
+    html: para(title, { size, color: palette.ink, bold: true }),
+    valign: 'top',
+  }, palette.ink))
+  els.push(rect({ x: 100, y: y + h + 10, w: 64, h: 7, color: accent, radius: 3 }))
+  return { els, bottom: y + h + 26 }
 }
 
 const coverLayout: ElementsFactory = ({ data, palette }) => {
   const els: PPTElement[] = []
-  const bg: SlideBackground = { type: 'solid', color: palette.deep }
+  const bg: SlideBackground = { type: 'solid', color: palette.coverBg }
+  const width = 880
+  const title = (data.title || '演示文稿').trim() || '演示文稿'
+  // 标题自适应字号 + 按实际高度居中排布；副标题跟随其下，避免长标题压住副标题
+  const size = pickTitleSize(title, width, [56, 48, 40, 34, 28])
+  const h = Math.round(estimateLines(title, size, width) * size * 1.24)
+  const subtitleSize = data.text && estimateLines(data.text, 24, width) > 1 ? 20 : 24
+  const subtitleH = data.text ? Math.round(estimateLines(data.text, subtitleSize, width) * subtitleSize * 1.5) : 0
+  const totalH = h + (data.text ? subtitleH + 34 : 0)
+  const top = Math.max(190, Math.round((VIEW_H - totalH) / 2) + 10)
+
   els.push(rect({ x: 0, y: 0, w: VIEW_W, h: 14, color: palette.top }))
-  els.push(rect({ x: 426, y: 190, w: 148, h: 6, color: palette.bar, radius: 3 }))
-  const title = data.title || '演示文稿'
+  els.push(rect({ x: 426, y: Math.max(60, top - 38), w: 148, h: 6, color: palette.coverBar, radius: 3 }))
   els.push(textEl({
-    x: 60, y: 228, w: 880, h: 110,
-    html: para(title, { size: 56, color: palette.darkText, bold: true, align: 'center' }),
-    valign: 'middle',
-  }))
+    x: 60, y: top, w: width, h,
+    html: para(title, { size, color: palette.coverText, bold: true, align: 'center' }),
+    valign: 'top',
+  }, palette.coverText))
   if (data.text) {
     els.push(textEl({
-      x: 60, y: 346, w: 880, h: 60,
-      html: para(data.text, { size: 24, color: 'rgba(255,255,255,0.82)', align: 'center' }),
-      valign: 'middle',
+      x: 60, y: top + h + 34, w: width, h: subtitleH,
+      html: para(truncateToLines(data.text, subtitleSize, width, 2), { size: subtitleSize, color: palette.coverSub, align: 'center' }),
+      valign: 'top',
     }))
   }
   return { elements: els, background: bg }
@@ -293,20 +383,49 @@ const coverLayout: ElementsFactory = ({ data, palette }) => {
 const contentsLayout: ElementsFactory = ({ data, accent, palette, slideNo }) => {
   const els: PPTElement[] = []
   const items = (data.items || []).filter((it) => typeof it === 'string') as string[]
-  els.push(...titleHeader(data, accent, 84, palette))
+  const header = titleHeader(data, accent, 76, palette)
+  els.push(...header.els)
+
   if (items.length) {
-    const limit = Math.min(items.length, 8)
-    const rows = items.slice(0, limit).map((it, i) =>
-      `<p><span style="font-size:22px;color:${accent};font-weight:bold">${num(i + 1)}</span><span style="font-size:22px;color:${palette.ink}">&nbsp;&nbsp;&nbsp;${esc(it)}</span></p>`,
+    // 逐级缩小字号以适配可用高度；仍放不下则截断条目并提示
+    const top = Math.max(header.bottom, 160)
+    const avail = 508 - top
+    const width = 780
+    const variants = [
+      { s: 22, ps: 16 },
+      { s: 20, ps: 14 },
+      { s: 18, ps: 12 },
+      { s: 16, ps: 10 },
+    ]
+    const heightOf = (list: string[], v: { s: number; ps: number }) =>
+      list.reduce(
+        (h, it) => h + estimateLines(it, v.s, width) * v.s * 1.5 + v.ps,
+        0,
+      )
+    let used = variants[variants.length - 1]
+    for (const v of variants) {
+      if (heightOf(items, v) <= avail) {
+        used = v
+        break
+      }
+    }
+    let show = items.slice()
+    let note = ''
+    if (heightOf(show, used) > avail) {
+      while (show.length > 1 && heightOf(show, used) > avail) show.pop()
+      note = `…… 共 ${items.length} 条，已省略 ${items.length - show.length} 条`
+    }
+    const rows = show.map((it, i) =>
+      `<p><span style="font-size:${used.s}px;color:${accent};font-weight:bold">${num(i + 1)}</span><span style="font-size:${used.s}px;color:${palette.ink}">&nbsp;&nbsp;&nbsp;${esc(truncateToLines(it, used.s, width - 40, 2))}</span></p>`,
     )
-    if (items.length > limit) {
-      rows.push(`<p><span style="font-size:18px;color:${palette.faint}">&nbsp;&nbsp;&nbsp;…… 共 ${items.length} 条</span></p>`)
+    if (note) {
+      rows.push(`<p><span style="font-size:${Math.max(14, used.s - 4)}px;color:${palette.faint}">${note}</span></p>`)
     }
     els.push(textEl({
-      x: 112, y: 200, w: 800, h: 320,
+      x: 112, y: top, w: width, h: Math.min(avail, heightOf(show, used) + 8),
       html: rows.join(''),
-      lineHeight: 1.55,
-      paragraphSpace: 16,
+      lineHeight: 1.5,
+      paragraphSpace: used.ps,
     }, palette.ink))
   }
   els.push(textEl({
@@ -317,25 +436,35 @@ const contentsLayout: ElementsFactory = ({ data, accent, palette, slideNo }) => 
 }
 
 const transitionLayout: ElementsFactory = ({ data, palette }) => {
-  const bg: SlideBackground = { type: 'solid', color: palette.deepAlt }
+  const bg: SlideBackground = { type: 'solid', color: palette.transBg }
   const els: PPTElement[] = []
   els.push(rect({ x: 0, y: 0, w: VIEW_W, h: 10, color: palette.top }))
-  const title = data.title || ''
+  const title = (data.title || '').trim()
+  // 标题自适应字号；副标题按标题实际高度下移，避免压字
+  let cursor = 232
   if (title) {
+    const width = 880
+    const size = pickTitleSize(title, width, [48, 42, 36, 30, 26])
+    const h = Math.round(estimateLines(title, size, width) * size * 1.28)
     els.push(textEl({
-      x: 60, y: 216, w: 880, h: 92,
-      html: para(title, { size: 48, color: palette.darkText, bold: true, align: 'center' }),
-      valign: 'middle',
-    }))
+      x: 60, y: cursor, w: width, h,
+      html: para(title, { size, color: palette.transText, bold: true, align: 'center' }),
+      valign: 'top',
+    }, palette.transText))
+    cursor += h + 22
   }
   if (data.text) {
+    const width = 720
+    const size = estimateLines(data.text, 22, width) <= 2 ? 22 : 18
+    const h = Math.round(estimateLines(data.text, size, width) * size * 1.4)
     els.push(textEl({
-      x: 140, y: 322, w: 720, h: 46,
-      html: para(data.text, { size: 22, color: 'rgba(255,255,255,0.75)', align: 'center' }),
-      valign: 'middle',
+      x: 140, y: cursor, w: width, h,
+      html: para(truncateToLines(data.text, size, width, 2), { size, color: palette.transSub, align: 'center' }),
+      valign: 'top',
     }))
+    cursor += h + 14
   }
-  els.push(rect({ x: 470, y: 368, w: 60, h: 5, color: palette.bar, radius: 2 }))
+  els.push(rect({ x: 470, y: Math.min(cursor, 430), w: 60, h: 5, color: palette.transBar, radius: 2 }))
   return { elements: els, background: bg }
 }
 
@@ -344,7 +473,8 @@ interface BodyItem {
   text?: string
 }
 const contentLayout: ElementsFactory = ({ data, accent, palette }) => {
-  const els: PPTElement[] = [...titleHeader(data, accent, 84, palette)]
+  const header = titleHeader(data, accent, 76, palette)
+  const els: PPTElement[] = [...header.els]
   const items = data.items || []
   const textual: BodyItem[] = []
   const charts: ChartItem[] = []
@@ -357,38 +487,74 @@ const contentLayout: ElementsFactory = ({ data, accent, palette }) => {
     else textual.push({ title: (it as BodyItem).title, text: (it as BodyItem).text })
   }
 
-  // 文本部分
-  const textPps: string[] = []
-  for (const it of textual) {
-    if (it.title) {
-      textPps.push(`<p><span style="font-size:22px;color:${palette.ink};font-weight:bold">${esc(it.title)}</span></p>`)
-      if (it.text) textPps.push(`<p><span style="font-size:19px;color:${palette.sub}">${esc(it.text)}</span></p>`)
-    } else if (it.text) {
-      textPps.push(`<p><span style="font-size:21px;color:${palette.ink}">·&nbsp;&nbsp;${esc(it.text)}</span></p>`)
+  const hasChart = charts.length > 0
+  const top = Math.max(header.bottom, 150)
+  const avail = 512 - top
+  const width = hasChart ? 480 : 780
+
+  // 逐级缩小字号；仍放不下则截断条目（并给出省略提示）
+  const variants = [
+    { t: 22, b: 19, lh: 1.5, ps: 12 },
+    { t: 20, b: 17, lh: 1.45, ps: 10 },
+    { t: 18, b: 15, lh: 1.4, ps: 8 },
+    { t: 16, b: 14, lh: 1.35, ps: 6 },
+  ]
+  const heightOf = (list: BodyItem[], v: (typeof variants)[number]) =>
+    list.reduce((h, it) => {
+      const tl = it.title ? estimateLines(it.title, v.t, width) * v.t * 1.35 : 0
+      const bl = it.text ? estimateLines(it.text, v.b, width) * v.b * 1.35 : 0
+      return h + tl + bl + v.ps
+    }, 0)
+  let used = variants[variants.length - 1]
+  for (const v of variants) {
+    if (heightOf(textual, v) <= avail) {
+      used = v
+      break
     }
+  }
+  let show = textual.slice()
+  let note = ''
+  if (heightOf(show, used) > avail) {
+    while (show.length > 1 && heightOf(show, used) > avail) show.pop()
+    note = `…… 共 ${textual.length} 条，已省略 ${textual.length - show.length} 条`
+  }
+
+  const textPps: string[] = []
+  for (const it of show) {
+    if (it.title) {
+      textPps.push(`<p><span style="font-size:${used.t}px;color:${palette.ink};font-weight:bold">${esc(truncateToLines(it.title, used.t, width, 2))}</span></p>`)
+      if (it.text) {
+        textPps.push(`<p><span style="font-size:${used.b}px;color:${palette.sub}">${esc(truncateToLines(it.text, used.b, width, 3))}</span></p>`)
+      }
+    } else if (it.text) {
+      textPps.push(`<p><span style="font-size:${used.t}px;color:${palette.ink}">·&nbsp;&nbsp;${esc(truncateToLines(it.text, used.t, width, 3))}</span></p>`)
+    }
+  }
+  if (note) {
+    textPps.push(`<p><span style="font-size:${Math.max(14, used.b - 4)}px;color:${palette.faint}">${note}</span></p>`)
   }
   if (images.length && !textPps.length) {
     const names = images.map((i) => i.title).filter(Boolean).join('、') || '由模型按内容配图'
     textPps.push(`<p><span style="font-size:18px;color:${palette.faint}">（本页配图位：${names}）</span></p>`)
   }
 
-  if (charts.length) {
-    // 有图表时：要点在左列、图表在右列
+  const bodyH = Math.min(avail, Math.max(60, heightOf(show, used) + 8))
+  if (hasChart) {
     if (textPps.length) {
       els.push(textEl({
-        x: 90, y: 206, w: 500, h: 300,
+        x: 90, y: top, w: width, h: bodyH,
         html: textPps.join(''),
-        lineHeight: 1.5,
-        paragraphSpace: 12,
+        lineHeight: used.lh,
+        paragraphSpace: used.ps,
       }, palette.ink))
     }
-    els.push(chartEl(charts[0], { x: 620, y: 186, w: 340, h: 340 }, accent))
+    els.push(chartEl(charts[0], { x: 620, y: Math.max(160, top - 12), w: 340, h: Math.min(340, avail + 12) }, accent))
   } else {
     els.push(textEl({
-      x: 100, y: 206, w: 800, h: 300,
+      x: 100, y: top, w: width, h: bodyH,
       html: textPps.join('') || para('（本页暂无文字内容）', { size: 20, color: palette.faint }),
-      lineHeight: 1.6,
-      paragraphSpace: 12,
+      lineHeight: used.lh,
+      paragraphSpace: used.ps,
     }, palette.ink))
   }
   return { elements: els, background: { type: 'solid', color: palette.paper } }
@@ -396,32 +562,48 @@ const contentLayout: ElementsFactory = ({ data, accent, palette }) => {
 
 const referenceLayout: ElementsFactory = ({ data, palette }) => {
   const accent = palette.accentFor(999) // 引用页用主题主色
-  const els: PPTElement[] = [...titleHeader(data, accent, 84, palette)]
+  const header = titleHeader(data, accent, 76, palette)
+  const els: PPTElement[] = [...header.els]
   const refs = data.references || []
-  const html = refs.map((r, i) =>
-    `<p><span style="font-size:15px;color:${accent};font-weight:bold">[${i + 1}]</span><span style="font-size:18px;color:${palette.sub}">&nbsp;&nbsp;${esc(r)}</span></p>`,
-  ).join('')
+  const top = Math.max(header.bottom, 150)
+  const avail = 512 - top
+  const width = 780
+  const size = 18
+  const perRow = size * 1.7 + 12
+  const maxRows = Math.max(1, Math.floor(avail / perRow))
+  const show = refs.slice(0, maxRows)
+  const rows = show.map((r, i) =>
+    `<p><span style="font-size:${size - 3}px;color:${accent};font-weight:bold">[${i + 1}]</span><span style="font-size:${size}px;color:${palette.sub}">&nbsp;&nbsp;${esc(truncateToLines(r, size, width - 40, 1))}</span></p>`,
+  )
+  if (refs.length > show.length) {
+    rows.push(`<p><span style="font-size:${size - 4}px;color:${palette.faint}">…… 共 ${refs.length} 条参考文献，已省略 ${refs.length - show.length} 条</span></p>`)
+  }
   els.push(textEl({
-    x: 100, y: 206, w: 800, h: 310,
-    html: html || para('（暂无参考文献）', { size: 18, color: palette.faint }),
-    lineHeight: 1.7,
+    x: 100, y: top, w: width, h: Math.min(avail, show.length * perRow + 8),
+    html: rows.join('') || para('（暂无参考文献）', { size, color: palette.faint }),
+    lineHeight: 1.6,
     paragraphSpace: 12,
   }, palette.ink))
   return { elements: els, background: { type: 'solid', color: palette.paper } }
 }
 
 const endLayout: ElementsFactory = ({ data, palette }) => {
-  const bg: SlideBackground = { type: 'solid', color: palette.deepEnd }
+  const bg: SlideBackground = { type: 'solid', color: palette.endBg }
   const els: PPTElement[] = []
   els.push(rect({ x: 0, y: 0, w: VIEW_W, h: 12, color: palette.top }))
+  const title = (data.title || '谢谢观看').trim() || '谢谢观看'
+  const width = 880
+  const size = pickTitleSize(title, width, [54, 46, 38, 32, 26])
+  const h = Math.round(estimateLines(title, size, width) * size * 1.28)
+  const y = Math.max(196, Math.round((VIEW_H - h) / 2) - 30)
   els.push(textEl({
-    x: 60, y: 216, w: 880, h: 96,
-    html: para(data.title || '谢谢观看', { size: 54, color: palette.darkText, bold: true, align: 'center' }),
-    valign: 'middle',
-  }))
+    x: 60, y, w: width, h,
+    html: para(title, { size, color: palette.endText, bold: true, align: 'center' }),
+    valign: 'top',
+  }, palette.endText))
   els.push(textEl({
-    x: 60, y: 326, w: 880, h: 40,
-    html: para('Thanks for watching', { size: 18, color: 'rgba(255,255,255,0.6)', align: 'center' }),
+    x: 60, y: y + h + 18, w: width, h: 40,
+    html: para('Thanks for watching', { size: 18, color: palette.coverSub, align: 'center' }),
   }))
   return { elements: els, background: bg }
 }

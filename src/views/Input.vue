@@ -5,10 +5,12 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AIPPT_Outline, AIPPT_Outline_From_File } from '../services'
 import { useGenerationStore, type GenSource } from '../store/generation'
+import { useSessionsStore } from '../store/sessions'
 import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
+const sessions = useSessionsStore()
 
 const RECOMMENDED = [
   'AI 大模型行业趋势报告',
@@ -107,6 +109,21 @@ async function generate() {
     gen.setMarkdown(full)
     if (uploaded) gen.setUploadedFile(uploaded.fileId, uploaded.fileName)
     else gen.clearUploadedFile()
+    // 会话归档：把本次“大纲生成”写入当前会话（无会话/上一次已完成时自动开新会话）
+    try {
+      await sessions.checkpoint({
+        topic: topic.value,
+        title: topic.value.trim() || uploaded?.fileName || '未命名会话',
+        source: gen.source,
+        language: language.value,
+        model: model.value,
+        fileId: gen.fileId,
+        fileName: gen.fileName,
+        outline: full,
+      })
+    } catch (err) {
+      console.warn('会话保存失败（不影响生成）：', err)
+    }
     done.value = true
   } catch (e) {
     errMsg.value = `生成失败：${(e as Error).message}`

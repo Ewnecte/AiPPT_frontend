@@ -19,7 +19,7 @@ import { useRouter } from 'vue-router'
 import { useDraftStore } from '../store/slides'
 import type { SlideSchema } from '../types/AIPPT'
 import { SAMPLE_OUTLINE, parseOutline, schemasFromOutline } from '../utils/aippt'
-import { getTemplateData } from '../services'
+import { loadDeckTheme } from '../utils/theme'
 import { makeBlankCover, schemasToPptistSlides, type DeckTheme } from '../utils/schemaToPptist'
 import type { Slide } from '../pptist/types/slides'
 
@@ -48,28 +48,15 @@ let lastLoadedSource: unknown = null
 // 模板主题缓存（按 templateId），避免每次进入编辑器重复拉取
 const themeCache = new Map<string, DeckTheme | null>()
 
-/** 依据模板选择页存下的 templateId 拉取模板 theme；无模板/失败返回 null（用内置紫蓝）。 */
+/** 解析当前 deck 应使用的模板主题：草稿里已有直接用，否则按 templateId 拉取 */
 async function resolveTheme(): Promise<DeckTheme | null> {
+  const fromMeta = draftStore.meta.templateTheme
+  if (fromMeta) return fromMeta
   const id = draftStore.meta.templateId?.trim()
   if (!id) return null
   const cached = themeCache.get(id)
   if (cached !== undefined) return cached
-  let theme: DeckTheme | null = null
-  try {
-    const deck = await getTemplateData(id)
-    const t = deck.theme
-    if (t && Array.isArray(t.themeColors) && t.themeColors.length) {
-      theme = {
-        name: deck.name || t.name,
-        themeColors: t.themeColors,
-        backgroundColor: t.backgroundColor,
-        fontColor: t.fontColor,
-        fontName: t.fontName,
-      }
-    }
-  } catch {
-    theme = null // 拉取失败不影响进入编辑器，回落默认主题
-  }
+  const theme = await loadDeckTheme(id)
   themeCache.set(id, theme)
   return theme
 }

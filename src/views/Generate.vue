@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDraftStore } from '../store/slides'
 import { useGenerationStore } from '../store/generation'
+import { useSessionsStore } from '../store/sessions'
 import { AIPPT_StreamEvents, AIPPTByID } from '../services'
 import type { SlideSchema } from '../types/AIPPT'
 import SlideViewer from '../components/SlideViewer.vue'
@@ -24,6 +25,7 @@ import {
 
 const store = useDraftStore()
 const gen = useGenerationStore()
+const sessions = useSessionsStore()
 const router = useRouter()
 
 // 大纲初值：优先模板页写入的 draft meta，其次取 generation store 中的权威大纲
@@ -187,6 +189,31 @@ function finishOk() {
   const count = store.slideCount
   setStatus(`生成完成：共 ${count} 页幻灯片`)
   pushLog(`生成完成：共 ${count} 页`)
+  saveRunToSession()
+}
+
+/** 生成完成 → 把这一版结果（SlideSchema[]）追加到当前会话，形成“历史版本”。 */
+function saveRunToSession() {
+  try {
+    const slides = store.exportSchemas()
+    void sessions
+      .addRun({
+        topic: gen.topic,
+        title: store.meta.title || gen.topic.trim() || '未命名演示文稿',
+        source: gen.source,
+        language: language.value,
+        model: gen.model,
+        fileId: gen.fileId,
+        fileName: gen.fileName,
+        templateId: store.meta.templateId,
+        kbSource: store.meta.source,
+        outline: outline.value.trim() || store.meta.outline,
+        slides,
+      })
+      .catch((e) => console.warn('会话保存失败（不影响生成）：', e))
+  } catch (e) {
+    console.warn('会话保存失败（不影响生成）：', e)
+  }
 }
 
 function stop() {

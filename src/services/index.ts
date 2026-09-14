@@ -415,9 +415,91 @@ export interface TemplateDeckData {
   name?: string
   title?: string
   theme?: TemplateTheme
+  /** 模板自带的整页版式（用于采样各类页面的背景色） */
+  slides?: { type?: string; background?: unknown }[]
 }
 export async function getTemplateData(id: string): Promise<TemplateDeckData> {
   const res = await fetch(toUrl(`/data/${encodeURIComponent(id)}.json`))
   if (!res.ok) throw new Error('模板数据获取失败')
   return (await res.json()) as TemplateDeckData
+}
+
+// ------------------------------------------------------------------
+// 多 Agent PPT 生成（B + E）：SSE 事件流 + 沙箱产物
+// ------------------------------------------------------------------
+export interface AgentRunOptions {
+  task: string
+  mode?: 'auto' | 'real' | 'fake'
+  maxSteps?: number
+  maxTokens?: number
+  timeoutS?: number
+  sandboxPrefix?: string
+  /** 离线演示用的脚本化 Planner 决策序列 */
+  script?: unknown[]
+}
+
+export interface AgentEvent {
+  type: string
+  [k: string]: unknown
+}
+
+/** 运行多 Agent 任务：逐条回调事件（start/plan/step/loop_detected/breaker/artifact/result/done）。 */
+export async function runAgentTask(
+  options: AgentRunOptions,
+  onEvent: (ev: AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(toUrl('/tools/agent_run'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(options),
+    signal,
+  })
+  if (!res.ok || !res.body) throw new Error(`多 Agent 任务请求失败(${res.status})`)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t.startsWith('data:')) continue
+      const body = t.slice(5).trim()
+      if (body === '[DONE]') return
+      try {
+        onEvent(JSON.parse(body) as AgentEvent)
+      } catch {
+        // 忽略无法解析的行
+      }
+    }
+  }
+}
+
+/** 读取多 Agent 工具白名单与参数 Schema 说明。 */
+export async function getAgentInfo(): Promise<{
+  ok: boolean
+  tools: string[]
+  catalog: string
+  sandbox_dir: string
+  limits: Record<string, number>
+}> {
+  const res = await fetch(toUrl('/tools/agent_info'))
+  if (!res.ok) throw new Error('多 Agent 信息获取失败')
+  return await res.json()
+}
+
+/** 列出沙箱内已落盘产物。 */
+export async function listAgentFiles(prefix = ''): Promise<{
+  ok: boolean
+  sandbox_dir: string
+  files: { path: string; bytes: number; mtime: number }[]
+}> {
+  const q = prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''
+  const res = await fetch(toUrl(`/tools/agent_files${q}`))
+  if (!res.ok) throw new Error('沙箱文件列表获取失败')
+  return await res.json()
 }

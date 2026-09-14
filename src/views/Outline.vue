@@ -4,10 +4,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGenerationStore } from '../store/generation'
+import { useSessionsStore } from '../store/sessions'
 import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
+const sessions = useSessionsStore()
 
 interface OutlineNode {
   key: number
@@ -229,6 +231,25 @@ const SAMPLE_MARKDOWN = `# AI 大模型行业趋势报告
 function saveAndGo(to: string) {
   const md = serializeTree(nodes.value)
   gen.setMarkdown(md)
+  if (to !== '/') {
+    // 大纲编辑完成：同步到当前会话（修改后的大纲会开启一个新“版次”记录）
+    try {
+      void sessions
+        .checkpoint({
+          topic: gen.topic,
+          title: gen.topic.trim() || '未命名会话',
+          source: gen.source,
+          language: gen.language,
+          model: gen.model,
+          fileId: gen.fileId,
+          fileName: gen.fileName,
+          outline: md,
+        })
+        .catch((e) => console.warn('会话保存失败：', e))
+    } catch (e) {
+      console.warn('会话保存失败：', e)
+    }
+  }
   router.push(to)
 }
 </script>

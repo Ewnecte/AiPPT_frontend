@@ -8,12 +8,15 @@ import { getTemplates } from '../services'
 import type { TemplateInfo } from '../types/AIPPT'
 import { useGenerationStore } from '../store/generation'
 import { useDraftStore } from '../store/slides'
+import { useSessionsStore } from '../store/sessions'
 import { parseOutline } from '../utils/aippt'
+import { loadDeckTheme } from '../utils/theme'
 import StepBar from '../components/StepBar.vue'
 
 const router = useRouter()
 const gen = useGenerationStore()
 const draft = useDraftStore()
+const sessions = useSessionsStore()
 
 const LANGUAGES = [
   { label: '简体中文', value: '中文' },
@@ -108,7 +111,7 @@ const canGenerate = computed(() => {
 })
 
 /** 确认配置后跳转 /generate（PPT 生成页）执行逐页生成。 */
-function startGeneration() {
+async function startGeneration() {
   errMsg.value = ''
   if (hasTemplates.value && !selectionMade.value) {
     errMsg.value = '请先选择一套模板，或使用默认版式。'
@@ -121,15 +124,30 @@ function startGeneration() {
 
   const md = markdown.value
   const plan = parseOutline(md)
+  // 先把所选模板的主题（主题色/各类页背景）取回来，保证生成与预览都按模板上色
+  const theme = await loadDeckTheme(selectedId.value)
   // 生成配置写入 draft meta：/generate 页据此（自动）开始生成，无需再选一遍
   draft.reset()
   draft.setMeta({
     outline: md,
     title: plan.title && plan.title !== '未命名演示' ? plan.title : gen.topic.trim() || '未命名演示文稿',
     templateId: selectedId.value,
+    templateTheme: theme,
     language: language.value,
     source: infoSrc.value, // none | web | file
   })
+  // 会话归档：记录模板选择与信息来源
+  try {
+    void sessions
+      .checkpoint({
+        templateId: selectedId.value,
+        templateName: chosenName.value || undefined,
+        kbSource: infoSrc.value,
+      })
+      .catch((e) => console.warn('会话保存失败：', e))
+  } catch (e) {
+    console.warn('会话保存失败：', e)
+  }
   router.push('/generate')
 }
 </script>

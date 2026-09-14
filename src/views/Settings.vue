@@ -16,6 +16,7 @@ import {
   uploadKbUrl,
 } from '../services'
 import type { KbUploadResult } from '../services'
+import { useGenerationStore } from '../store/generation'
 
 /* ================= 通用轻量 toast ================= */
 interface Toast {
@@ -52,7 +53,10 @@ interface KbFile {
   updatedAt: string
   status: 'ready'
 }
-const USER_ID = '1'
+// 知识库命名空间与主流程必须一致：上传/检索/列表/删除都用同一个 userId。
+// 之前写死 '1'，与录入页上传（gen.userId，如 u_xxx）不一致，导致“导入后列表不显示”。
+const gen = useGenerationStore()
+const USER_ID = gen.userId
 const kbFiles = ref<KbFile[]>([])
 const kbLoading = ref(false)
 const kbKeyword = ref('')

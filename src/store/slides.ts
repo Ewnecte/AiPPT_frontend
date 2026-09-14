@@ -10,14 +10,15 @@ import { defineStore } from 'pinia'
 import type { SlideSchema, SlideType } from '../types/AIPPT'
 import type { EditorSlide, SlideElement } from '../types/editor'
 import {
-  accentAt,
   cloneSchema,
   cloneSlide,
   createBlankSlide,
   schemaToSlide,
   syncElementToSchema,
   syncSlideFromElements,
+  themeAccentAt,
   uid,
+  type DeckTheme,
 } from '../utils/aippt'
 
 export interface GenMeta {
@@ -27,6 +28,8 @@ export interface GenMeta {
   language: string
   // 内容信息来源：none=不检索 / web=联网检索 / file=基于已上传文档(知识库)生成 / kb=知识库检索
   source: 'none' | 'web' | 'file' | 'kb'
+  /** 所选模板的主题（模板色/背景/字体），生成结果与预览都按它上色 */
+  templateTheme?: DeckTheme | null
 }
 
 const EMPTY_META: GenMeta = {
@@ -35,6 +38,7 @@ const EMPTY_META: GenMeta = {
   templateId: '',
   language: '中文',
   source: 'none',
+  templateTheme: null,
 }
 
 interface Snapshot {
@@ -123,20 +127,26 @@ export const useDraftStore = defineStore('draft', {
       this.slides.push(slide)
       this.currentIndex = this.slides.length - 1
     },
-    /** 生成中追加一页契约（自动计数过渡章节序号 / 版式主色） */
+    /** 生成中追加一页契约（自动计数过渡章节序号 / 模板主色） */
     pushSchema(schema: SlideSchema) {
       const transitionIndex = schema.type === 'transition'
         ? this.slides.filter((s) => s.type === 'transition').length
         : undefined
+      const theme = this.meta.templateTheme ?? null
       const slide = schemaToSlide(schema, {
-        accent: accentAt(this.slides.length),
+        accent: themeAccentAt(theme, this.slides.length),
         transitionIndex,
+        theme,
       })
       this.pushSlide(slide)
     },
     insertBlank(type: SlideType, atEnd = true) {
       const i = atEnd ? this.slides.length : Math.max(0, this.currentIndex)
-      const slide = createBlankSlide(type, { accent: accentAt(this.slides.length + 1) })
+      const theme = this.meta.templateTheme ?? null
+      const slide = createBlankSlide(type, {
+        accent: themeAccentAt(theme, this.slides.length + 1),
+        theme,
+      })
       this.slides.splice(i, 0, slide)
       this.currentIndex = i
     },
@@ -229,6 +239,7 @@ export const useDraftStore = defineStore('draft', {
       const rebuilt = schemaToSlide(src.schema, {
         accent: src.accent,
         transitionIndex,
+        theme: this.meta.templateTheme ?? null,
       })
       src.elements = rebuilt.elements
       src.schema = cloneSchema(src.schema)
@@ -241,12 +252,17 @@ export const useDraftStore = defineStore('draft', {
         return cloneSchema(slide.schema)
       })
     },
-    /** 替换整批内容契约（导入 JSON 后用），自动按序排版 */
+    /** 替换整批内容契约（导入 JSON 后用），自动按序排版（套用当前模板主题） */
     importSchemas(schemas: SlideSchema[]) {
+      const theme = this.meta.templateTheme ?? null
       let transitionIndex = 0
       const slides = schemas.map((s, i) => {
         const isTrans = s.type === 'transition'
-        const slide = schemaToSlide(s, { accent: accentAt(i), transitionIndex: isTrans ? transitionIndex : undefined })
+        const slide = schemaToSlide(s, {
+          accent: themeAccentAt(theme, i),
+          transitionIndex: isTrans ? transitionIndex : undefined,
+          theme,
+        })
         if (isTrans) transitionIndex += 1
         return slide
       })

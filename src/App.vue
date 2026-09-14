@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 应用根组件：顶部品牌区 + 步骤流导航 + 路由出口
+// 应用根组件：顶部品牌区 + 步骤流导航 + 左侧会话侧边栏 + 路由出口
 // 设计规范见 SRS 3.1：紫蓝渐变 #667eea → #764ba2
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import SessionSidebar from './components/SessionSidebar.vue'
 
 const route = useRoute()
 // /screen 放映页等声明 meta.fullscreen 的路由：隐藏顶栏、全幅承载，实现真正全屏
@@ -15,7 +16,7 @@ const isFullscreen = computed(() => Boolean(route.meta.fullscreen))
     <div v-if="isFullscreen" class="fullstage">
       <router-view />
     </div>
-    <!-- 常规布局：顶部品牌区 + 步骤流导航 -->
+    <!-- 常规布局：顶部品牌区 + 步骤流导航 + 左侧会话侧边栏 -->
     <template v-else>
       <header class="topbar">
         <div class="brand"><span class="logo">P</span> AiPPT</div>
@@ -24,14 +25,18 @@ const isFullscreen = computed(() => Boolean(route.meta.fullscreen))
           <router-link to="/outline">大纲编辑</router-link>
           <router-link to="/ppt">选择模板</router-link>
           <router-link to="/generate">PPT生成</router-link>
+          <router-link to="/agent">多Agent</router-link>
           <router-link to="/editor">编辑器</router-link>
           <router-link to="/screen">放映</router-link>
           <router-link to="/settings">设置</router-link>
         </nav>
       </header>
-      <main class="main" :class="{ wide: $route.meta.wide }">
-        <router-view />
-      </main>
+      <div class="shell">
+        <SessionSidebar />
+        <main class="main" :class="{ wide: $route.meta.wide }">
+          <router-view />
+        </main>
+      </div>
     </template>
   </div>
 </template>
@@ -102,15 +107,22 @@ body {
   color: #fff;
   font-weight: 600;
 }
+.shell {
+  display: flex;
+  align-items: flex-start;
+  min-height: 0;
+}
 .main {
   flex: 1;
+  min-width: 0;
   max-width: 1200px;
-  width: 100%;
+  width: auto;
   margin: 0 auto;
   padding: 32px 24px;
 }
 .main.wide {
   max-width: none;
+  width: 100%;
   padding: 0;
 }
 .app.fullscreen {
